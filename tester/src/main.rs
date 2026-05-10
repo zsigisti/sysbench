@@ -1,288 +1,256 @@
-// sysbench — CPU / Network / Storage benchmark in one file.
-//
-// CPU:     hex digits of π via BBP formula (parallel-friendly)
-// Network: Cloudflare speed-test endpoints
-// Storage: write + read a 1 GB file in $TMPDIR
+// sysbench — multi-module CPU / Memory / Network / Storage benchmark.
 
-use std::io::{Read, Write};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+use clap::{Parser, Subcommand};
+use serde::Serialize;
+use std::time::Duration;
 
-// ============================================================
-// CPU — Bailey–Borwein–Plouffe formula for hex digits of π
-// ============================================================
+mod cpu;
+mod disk;
+mod mem;
+mod net;
+mod stats;
+mod sysinfo;
 
-fn modpow(base: u64, mut exp: u64, modulus: u64) -> u64 {
-    if modulus <= 1 {
-        return 0;
-    }
-    let m = modulus as u128;
-    let mut result: u128 = 1;
-    let mut b: u128 = (base as u128) % m;
-    while exp > 0 {
-        if exp & 1 == 1 {
-            result = (result * b) % m;
-        }
-        exp >>= 1;
-        b = (b * b) % m;
-    }
-    result as u64
+#[derive(Parser)]
+#[command(name = "sysbench", about = "System benchmark", version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    #[arg(long, global = true, help = "Output JSON")]
+    json: bool,
+
+    #[arg(long, global = true, default_value = "10", help = "Duration per test (seconds)")]
+    duration: u64,
+
+    #[arg(long, global = true, default_value = "5", help = "Runs per test")]
+    runs: usize,
+
+    #[arg(long, global = true, default_value = "4", help = "Parallel download streams")]
+    streams: usize,
 }
 
-// Fractional part of 16^n * Σ 1/(16^k * (8k+j))
-fn series(j: u64, n: u64) -> f64 {
-    let mut s = 0.0f64;
-    // First sum: k = 0..=n, using modular arithmetic
-    for k in 0..=n {
-        let denom = 8 * k + j;
-        let r = modpow(16, n - k, denom);
-        s += (r as f64) / (denom as f64);
-        s -= s.floor();
-    }
-    // Tail: k > n, terms shrink by 1/16 each time
-    let mut k = n + 1;
-    let mut p = 1.0f64 / 16.0;
-    while p > 1e-17 {
-        s += p / ((8 * k + j) as f64);
-        p /= 16.0;
-        k += 1;
-    }
-    s - s.floor()
+#[derive(Subcommand)]
+enum Commands {
+    All,
+    Cpu,
+    Mem,
+    Net,
+    Disk,
 }
 
-fn bbp_hex_digit(n: u64) -> u8 {
-    let x = 4.0 * series(1, n) - 2.0 * series(4, n) - series(5, n) - series(6, n);
-    let mut frac = x - x.floor();
-    if frac < 0.0 {
-        frac += 1.0;
-    }
-    ((frac * 16.0) as u32 & 0xF) as u8
+#[derive(Serialize)]
+struct FullResults {
+    sysinfo: sysinfo::SysInfo,
+    cpu: Option<cpu::CpuResults>,
+    mem: Option<mem::MemResults>,
+    net: Option<net::NetResults>,
+    disk: Option<DiskOutcome>,
 }
 
-fn cpu_single(dur: Duration) -> u64 {
-    let start = Instant::now();
-    let mut n = 0u64;
-    // Batch to amortise the time check
-    while start.elapsed() < dur {
-        for _ in 0..50 {
-            // black_box not in stable std without nightly; assign to a volatile-ish sink
-            let d = bbp_hex_digit(n);
-            // prevent the optimiser from eliminating the call
-            unsafe {
-                std::ptr::read_volatile(&d);
-            }
-            n += 1;
-        }
-    }
-    n
+#[derive(Serialize)]
+#[serde(untagged)]
+enum DiskOutcome {
+    Ok(disk::DiskResults),
+    Err { error: String },
 }
-
-fn cpu_multi(dur: Duration, threads: usize) -> u64 {
-    let counter = Arc::new(AtomicU64::new(0));
-    let stop = Arc::new(AtomicBool::new(false));
-    let mut handles = Vec::with_capacity(threads);
-
-    for _ in 0..threads {
-        let counter = counter.clone();
-        let stop = stop.clone();
-        handles.push(thread::spawn(move || {
-            while !stop.load(Ordering::Relaxed) {
-                let start_n = counter.fetch_add(50, Ordering::Relaxed);
-                for i in 0..50u64 {
-                    let d = bbp_hex_digit(start_n + i);
-                    unsafe {
-                        std::ptr::read_volatile(&d);
-                    }
-                }
-            }
-        }));
-    }
-
-    thread::sleep(dur);
-    stop.store(true, Ordering::Relaxed);
-    for h in handles {
-        let _ = h.join();
-    }
-    counter.load(Ordering::Relaxed)
-}
-
-fn avg_three<F: FnMut() -> u64>(label: &str, mut f: F) -> u64 {
-    let mut total = 0u64;
-    for i in 1..=3 {
-        let r = f();
-        println!("    {} run {}: {} digits", label, i, r);
-        total += r;
-    }
-    total / 3
-}
-
-// ============================================================
-// Network — Cloudflare speed test
-// ============================================================
-
-fn cf_get(url: &str) -> Result<ureq::Response, Box<dyn std::error::Error>> {
-    Ok(ureq::get(url)
-        .set("Origin", "https://speed.cloudflare.com")
-        .set("Referer", "https://speed.cloudflare.com/")
-        .call()?)
-}
-
-fn net_latency() -> Result<f64, Box<dyn std::error::Error>> {
-    let url = "https://speed.cloudflare.com/__down?bytes=0";
-    let mut times = Vec::with_capacity(10);
-    for _ in 0..10 {
-        let start = Instant::now();
-        let resp = cf_get(url)?;
-        let mut buf = vec![0u8; 1024];
-        let mut reader = resp.into_reader();
-        while reader.read(&mut buf)? > 0 {}
-        times.push(start.elapsed().as_secs_f64() * 1000.0);
-    }
-    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    Ok(times[times.len() / 2]) // median
-}
-
-fn net_download() -> Result<f64, Box<dyn std::error::Error>> {
-    let url = "https://speed.cloudflare.com/__down?bytes=104857600";
-    let resp = cf_get(url)?;
-    let mut reader = resp.into_reader();
-    let mut buf = vec![0u8; 64 * 1024];
-    let start = Instant::now();
-    let mut total: u64 = 0;
-    loop {
-        match reader.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => total += n as u64,
-            Err(e) => return Err(Box::new(e)),
-        }
-    }
-    let secs = start.elapsed().as_secs_f64().max(1e-9);
-    Ok((total as f64 * 8.0) / (secs * 1_000_000.0))
-}
-
-fn net_upload() -> Result<f64, Box<dyn std::error::Error>> {
-    let url = "https://speed.cloudflare.com/__up";
-    let size: usize = 52_428_800; // 50 MiB
-    let data = vec![0u8; size];
-    let start = Instant::now();
-    let _ = ureq::post(url)
-        .set("Content-Type", "application/octet-stream")
-        .set("Origin", "https://speed.cloudflare.com")
-        .set("Referer", "https://speed.cloudflare.com/")
-        .send_bytes(&data)?;
-    let secs = start.elapsed().as_secs_f64().max(1e-9);
-    Ok((size as f64 * 8.0) / (secs * 1_000_000.0))
-}
-
-
-// ============================================================
-// Storage — write + read a big file
-// ============================================================
-
-fn storage_test() -> std::io::Result<(f64, f64)> {
-    let mut path: PathBuf = std::env::temp_dir();
-    path.push("sysbench_scratch.bin");
-
-    let total: u64 = 1024 * 1024 * 1024; // 1 GiB
-    let chunk_size = 4 * 1024 * 1024;    // 4 MiB
-    let chunk = vec![0xA5u8; chunk_size];
-
-    // Write pass
-    let start = Instant::now();
-    {
-        let mut f = std::fs::File::create(&path)?;
-        let mut written: u64 = 0;
-        while written < total {
-            f.write_all(&chunk)?;
-            written += chunk_size as u64;
-        }
-        f.sync_all()?; // flush to physical device (best effort)
-    }
-    let write_secs = start.elapsed().as_secs_f64().max(1e-9);
-    let write_mbs = (total as f64 / (1024.0 * 1024.0)) / write_secs;
-
-    // Read pass — note: the OS page cache will likely make this fast.
-    let start = Instant::now();
-    {
-        let mut f = std::fs::File::open(&path)?;
-        let mut buf = vec![0u8; chunk_size];
-        loop {
-            match f.read(&mut buf)? {
-                0 => break,
-                _ => {}
-            }
-        }
-    }
-    let read_secs = start.elapsed().as_secs_f64().max(1e-9);
-    let read_mbs = (total as f64 / (1024.0 * 1024.0)) / read_secs;
-
-    let _ = std::fs::remove_file(&path);
-    Ok((write_mbs, read_mbs))
-}
-
-// ============================================================
-// main
-// ============================================================
 
 fn main() {
-    println!("===========================================");
-    println!("  sysbench — Rust system benchmark");
-    println!("===========================================\n");
+    let cli = Cli::parse();
+    let cmd = cli.command.unwrap_or(Commands::All);
+    let dur = Duration::from_secs(cli.duration);
 
-    // ---------- CPU ----------
-    println!("[1] CPU — π hex digits via BBP (10 s per run, avg of 3)\n");
-    let cores = thread::available_parallelism()
-    .map(|n| n.get())
-    .unwrap_or(1);
+    let info = sysinfo::SysInfo::collect();
 
-    println!("  Single-threaded:");
-    let st = avg_three("ST", || cpu_single(Duration::from_secs(10)));
-    println!("    => Single-threaded score: {} digits (avg)\n", st);
-
-    println!("  Multi-threaded ({} threads):", cores);
-    let mt = avg_three("MT", || cpu_multi(Duration::from_secs(10), cores));
-    println!("    => Multi-threaded score: {} digits (avg)\n", mt);
-
-    let speedup = mt as f64 / st.max(1) as f64;
-    println!("  Speedup (MT / ST): {:.2}×\n", speedup);
-
-    // ---------- Network ----------
-    println!("[2] Network — Cloudflare speed test\n");
-    print!("  Latency (10 pings, median)... ");
-    std::io::stdout().flush().ok();
-    match net_latency() {
-        Ok(v) => println!("{:.2} ms", v),
-        Err(e) => println!("failed: {}", e),
+    if cli.json {
+        // In JSON mode, emit sysinfo as a comment line above the JSON.
+        println!(
+            "# sysbench v0.2 — {} | {} cores | {} MiB RAM | {} | {}",
+            info.cpu_model, info.logical_cores, info.ram_mib, info.kernel, info.os
+        );
+    } else {
+        info.print();
     }
-    print!("  Download (100 MB)...          ");
-    std::io::stdout().flush().ok();
-    match net_download() {
-        Ok(v) => println!("{:.2} Mbps", v),
-        Err(e) => println!("failed: {}", e),
-    }
-    print!("  Upload   (50 MB)...           ");
-    std::io::stdout().flush().ok();
-    match net_upload() {
-        Ok(v) => println!("{:.2} Mbps", v),
-        Err(e) => println!("failed: {}", e),
-    }
-    println!();
 
-    // ---------- Storage ----------
-    println!("[3] Storage — 1 GB file in {}", std::env::temp_dir().display());
-    print!("  Working... ");
-    std::io::stdout().flush().ok();
-    match storage_test() {
-        Ok((w, r)) => {
-            println!("done");
-            println!("    Write: {:>8.2} MB/s", w);
-            println!("    Read:  {:>8.2} MB/s  (likely served from OS cache)", r);
+    let mut cpu_res: Option<cpu::CpuResults> = None;
+    let mut mem_res: Option<mem::MemResults> = None;
+    let mut net_res: Option<net::NetResults> = None;
+    let mut disk_res: Option<DiskOutcome> = None;
+
+    match cmd {
+        Commands::All => {
+            cpu_res = Some(cpu::run(dur, cli.runs));
+            mem_res = Some(mem::run());
+            net_res = Some(net::run(cli.streams));
+            disk_res = Some(match disk::run(info.ram_mib) {
+                Ok(d) => DiskOutcome::Ok(d),
+                Err(e) => DiskOutcome::Err { error: e.to_string() },
+            });
         }
-        Err(e) => println!("failed: {}", e),
+        Commands::Cpu => {
+            cpu_res = Some(cpu::run(dur, cli.runs));
+        }
+        Commands::Mem => {
+            mem_res = Some(mem::run());
+        }
+        Commands::Net => {
+            net_res = Some(net::run(cli.streams));
+        }
+        Commands::Disk => {
+            disk_res = Some(match disk::run(info.ram_mib) {
+                Ok(d) => DiskOutcome::Ok(d),
+                Err(e) => DiskOutcome::Err { error: e.to_string() },
+            });
+        }
     }
 
-    println!("\n===========================================");
+    if cli.json {
+        let full = FullResults {
+            sysinfo: info,
+            cpu: cpu_res,
+            mem: mem_res,
+            net: net_res,
+            disk: disk_res,
+        };
+        match serde_json::to_string_pretty(&full) {
+            Ok(s) => println!("{}", s),
+            Err(e) => eprintln!("JSON serialization failed: {}", e),
+        }
+    } else {
+        if let Some(c) = &cpu_res {
+            print_cpu(c, cli.duration, cli.runs);
+        }
+        if let Some(m) = &mem_res {
+            print_mem(m);
+        }
+        if let Some(n) = &net_res {
+            print_net(n, cli.streams);
+        }
+        if let Some(d) = &disk_res {
+            print_disk(d);
+        }
+        println!("===================================================");
+    }
+}
+
+// ============================================================
+// Human-readable printers
+// ============================================================
+
+fn fmt_score(score: &cpu::TestScore) -> String {
+    format!("{:>8.2} ± {:>5.2} {}", score.median, score.stddev, score.unit)
+}
+
+fn print_cpu(r: &cpu::CpuResults, dur: u64, runs: usize) {
+    println!();
+    println!(
+        "[1] CPU Benchmark  ({}s/run, {} runs, median ± stddev)",
+        dur, runs
+    );
+    println!("  --- Single-threaded ---");
+    println!("  BBP-π       : {}", fmt_score(&r.bbp_st));
+    println!("  SHA-256     : {}", fmt_score(&r.sha256_st));
+    println!("  MatMul      : {}", fmt_score(&r.matmul_st));
+    println!("  LZ4         : {}", fmt_score(&r.lz4_st));
+    println!("  Sort        : {}", fmt_score(&r.sort_st));
+    println!("  Composite ST score: {:.0}", r.composite_st);
+    println!();
+    println!("  --- Multi-threaded ({} threads) ---", r.threads);
+    println!("  BBP-π       : {}", fmt_score(&r.bbp_mt));
+    println!("  SHA-256     : {}", fmt_score(&r.sha256_mt));
+    println!("  MatMul      : {}", fmt_score(&r.matmul_mt));
+    println!("  LZ4         : {}", fmt_score(&r.lz4_mt));
+    println!("  Sort        : {}", fmt_score(&r.sort_mt));
+    println!("  Composite MT score: {:.0}", r.composite_mt);
+    println!("  Speedup: {:.2}×", r.speedup);
+
+    let pairs: [(&str, &cpu::TestScore); 10] = [
+        ("BBP-ST", &r.bbp_st),
+        ("SHA256-ST", &r.sha256_st),
+        ("MatMul-ST", &r.matmul_st),
+        ("LZ4-ST", &r.lz4_st),
+        ("Sort-ST", &r.sort_st),
+        ("BBP-MT", &r.bbp_mt),
+        ("SHA256-MT", &r.sha256_mt),
+        ("MatMul-MT", &r.matmul_mt),
+        ("LZ4-MT", &r.lz4_mt),
+        ("Sort-MT", &r.sort_mt),
+    ];
+    let mut warned = false;
+    for (name, s) in &pairs {
+        if s.high_variance {
+            if !warned {
+                println!();
+                warned = true;
+            }
+            println!(
+                "  [!] {} high variance ({:.1}%) — possible thermal throttling",
+                name,
+                if s.median > 0.0 {
+                    100.0 * s.stddev / s.median
+                } else {
+                    0.0
+                }
+            );
+        }
+    }
+}
+
+fn print_mem(m: &mem::MemResults) {
+    println!();
+    println!("[2] Memory Bandwidth (STREAM, 256 MiB arrays)");
+    println!("  Copy  : {:>6.2} GB/s", m.copy_gbs);
+    println!("  Scale : {:>6.2} GB/s", m.scale_gbs);
+    println!("  Add   : {:>6.2} GB/s", m.add_gbs);
+    println!("  Triad : {:>6.2} GB/s", m.triad_gbs);
+}
+
+fn print_net(n: &net::NetResults, streams: usize) {
+    println!();
+    println!("[3] Network — Cloudflare");
+    match &n.latency {
+        Ok(l) => println!(
+            "  Latency : {:.2} ms avg | {:.2} min | {:.2} max | ±{:.2} stddev | {:.2} jitter",
+            l.avg_ms, l.min_ms, l.max_ms, l.stddev_ms, l.jitter_ms
+        ),
+        Err(e) => println!("  Latency : failed: {}", e),
+    }
+    match &n.download_mbps {
+        Ok(v) => println!("  Download: {:.2} Mbps  ({} streams, 10s measured)", v, streams),
+        Err(e) => println!("  Download: failed: {}", e),
+    }
+    match &n.upload_mbps {
+        Ok(v) => println!("  Upload  : {:.2} Mbps", v),
+        Err(e) => println!("  Upload  : failed: {}", e),
+    }
+}
+
+fn print_disk(d: &DiskOutcome) {
+    println!();
+    match d {
+        DiskOutcome::Ok(r) => {
+            #[cfg(target_os = "linux")]
+            let mode = "O_DIRECT";
+            #[cfg(not(target_os = "linux"))]
+            let mode = "buffered";
+            println!("[4] Storage  (file: {} MiB, {})", r.file_size_mib, mode);
+            println!("  Seq Write  : {:>8.1} MB/s", r.seq_write_mbs);
+            if r.seq_read_cached {
+                println!("  Seq Read   : {:>8.1} MB/s  [!] likely cached", r.seq_read_mbs);
+            } else {
+                println!("  Seq Read   : {:>8.1} MB/s", r.seq_read_mbs);
+            }
+            println!(
+                "  Rand 4K R  :   p50={:>4.0} µs   p99={:>4.0} µs",
+                r.rand_read_p50_us, r.rand_read_p99_us
+            );
+            println!(
+                "  Rand 4K W  :   p50={:>4.0} µs   p99={:>4.0} µs",
+                r.rand_write_p50_us, r.rand_write_p99_us
+            );
+        }
+        DiskOutcome::Err { error } => {
+            println!("[4] Storage  : failed: {}", error);
+        }
+    }
 }
