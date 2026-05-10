@@ -35,7 +35,28 @@ ensure_rust() {
     info "Rust installed: $(rustc --version)"
 }
 
+ensure_cc() {
+    command -v cc >/dev/null 2>&1 && return
+    warn "No C linker found — trying to install build tools..."
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get install -y build-essential
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y gcc
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y gcc
+    elif command -v pacman >/dev/null 2>&1; then
+        pacman -Sy --noconfirm base-devel
+    elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache build-base
+    else
+        die "Could not install a C linker automatically. Install gcc/build-essential and re-run."
+    fi
+    command -v cc >/dev/null 2>&1 || die "C linker still not found after install attempt."
+    info "C toolchain ready."
+}
+
 ensure_rust
+ensure_cc
 
 # ── locate source (clone if running via curl) ──────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/tmp}")" && pwd)"
