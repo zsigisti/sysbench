@@ -59,11 +59,16 @@ ensure_rust
 ensure_cc
 
 # ── locate source (clone if running via curl) ──────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/tmp}")" && pwd)"
-CRATE_DIR="$SCRIPT_DIR/tester"
 CLONED_DIR=""
+CRATE_DIR=""
 
-if [ ! -f "$CRATE_DIR/Cargo.toml" ]; then
+_self="${BASH_SOURCE[0]:-}"
+if [ -n "$_self" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
+    CRATE_DIR="$SCRIPT_DIR/tester"
+fi
+
+if [ ! -f "${CRATE_DIR}/Cargo.toml" ]; then
     command -v git >/dev/null 2>&1 || die "git is required. Install git and re-run."
     CLONED_DIR="$(mktemp -d)"
     info "Cloning repository into $CLONED_DIR ..."
