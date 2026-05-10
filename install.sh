@@ -37,10 +37,21 @@ ensure_rust() {
 
 ensure_rust
 
-# ── locate source ──────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ── locate source (clone if running via curl) ──────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/tmp}")" && pwd)"
 CRATE_DIR="$SCRIPT_DIR/tester"
-[ -f "$CRATE_DIR/Cargo.toml" ] || die "Cargo.toml not found at $CRATE_DIR"
+CLONED_DIR=""
+
+if [ ! -f "$CRATE_DIR/Cargo.toml" ]; then
+    command -v git >/dev/null 2>&1 || die "git is required. Install git and re-run."
+    CLONED_DIR="$(mktemp -d)"
+    info "Cloning repository into $CLONED_DIR ..."
+    git clone --depth 1 https://github.com/zsigisti/sysbench.git "$CLONED_DIR"
+    CRATE_DIR="$CLONED_DIR/tester"
+fi
+
+cleanup() { [ -n "$CLONED_DIR" ] && rm -rf "$CLONED_DIR"; }
+trap cleanup EXIT
 
 # ── build ──────────────────────────────────────────────────────────────────
 info "Building $BINARY (release + native CPU optimisations)..."

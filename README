@@ -18,6 +18,10 @@ BENCHMARKS
 INSTALL
 -------
 
+  curl -sSf https://raw.githubusercontent.com/zsigisti/sysbench/refs/heads/main/install.sh | bash
+
+  Or if you already have the repo cloned:
+
   bash install.sh
 
   The script will:
