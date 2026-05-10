@@ -10,34 +10,14 @@ info()  { echo -e "${GREEN}==>${NC} $*"; }
 warn()  { echo -e "${YELLOW}warn:${NC} $*"; }
 die()   { echo -e "${RED}error:${NC} $*" >&2; exit 1; }
 
-# ── ensure Rust is available ───────────────────────────────────────────────
-ensure_rust() {
-    if command -v cargo >/dev/null 2>&1; then
-        info "Rust $(rustc --version) found."
+# ── ensure C toolchain is available ───────────────────────────────────────
+ensure_cc() {
+    # Try to actually compile something — presence in PATH is not enough
+    if echo 'int main(){}' | cc -x c - -o /tmp/_cc_test 2>/dev/null; then
+        rm -f /tmp/_cc_test
         return
     fi
-
-    warn "Rust not found."
-    read -r -p "Install Rust via rustup now? [Y/n] " answer
-    case "${answer,,}" in
-        n|no) die "Rust is required. Install from https://rustup.rs and re-run." ;;
-    esac
-
-    info "Installing Rust via rustup..."
-    command -v curl >/dev/null 2>&1 || die "curl is required to install rustup."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
-
-    # Source the env so cargo is available in the rest of this script
-    # shellcheck source=/dev/null
-    source "$HOME/.cargo/env"
-
-    command -v cargo >/dev/null 2>&1 || die "rustup install finished but cargo still not found."
-    info "Rust installed: $(rustc --version)"
-}
-
-ensure_cc() {
-    command -v cc >/dev/null 2>&1 && return
-    warn "No C linker found — trying to install build tools..."
+    warn "No working C toolchain found — installing build tools..."
     if command -v apt-get >/dev/null 2>&1; then
         apt-get install -y build-essential
     elif command -v dnf >/dev/null 2>&1; then
@@ -49,14 +29,41 @@ ensure_cc() {
     elif command -v apk >/dev/null 2>&1; then
         apk add --no-cache build-base
     else
-        die "Could not install a C linker automatically. Install gcc/build-essential and re-run."
+        die "Could not install a C toolchain automatically. Install gcc/build-essential and re-run."
     fi
-    command -v cc >/dev/null 2>&1 || die "C linker still not found after install attempt."
+    echo 'int main(){}' | cc -x c - -o /tmp/_cc_test 2>/dev/null \
+        || die "C toolchain still not working after install attempt."
+    rm -f /tmp/_cc_test
     info "C toolchain ready."
 }
 
-ensure_rust
+# ── ensure Rust is available ───────────────────────────────────────────────
+ensure_rust() {
+    if command -v cargo >/dev/null 2>&1; then
+        info "Rust $(rustc --version) found."
+        return
+    fi
+
+    warn "Rust not found."
+    # Read from /dev/tty so curl-pipe-bash doesn't consume the script stream
+    read -r -p "Install Rust via rustup now? [Y/n] " answer </dev/tty || true
+    case "${answer,,}" in
+        n|no) die "Rust is required. Install from https://rustup.rs and re-run." ;;
+    esac
+
+    info "Installing Rust via rustup..."
+    command -v curl >/dev/null 2>&1 || die "curl is required to install rustup."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+
+    # shellcheck source=/dev/null
+    source "$HOME/.cargo/env"
+
+    command -v cargo >/dev/null 2>&1 || die "rustup install finished but cargo still not found."
+    info "Rust installed: $(rustc --version)"
+}
+
 ensure_cc
+ensure_rust
 
 # ── locate source (clone if running via curl) ──────────────────────────────
 CLONED_DIR=""
