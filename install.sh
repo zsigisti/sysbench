@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BINARY="sysbench"
+INSTALL_DIR="/usr/local/bin"
+
+# ── colours ────────────────────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+info()  { echo -e "${GREEN}==>${NC} $*"; }
+warn()  { echo -e "${YELLOW}warn:${NC} $*"; }
+die()   { echo -e "${RED}error:${NC} $*" >&2; exit 1; }
+
+# ── ensure Rust is available ───────────────────────────────────────────────
+ensure_rust() {
+    if command -v cargo >/dev/null 2>&1; then
+        info "Rust $(rustc --version) found."
+        return
+    fi
+
+    warn "Rust not found."
+    read -r -p "Install Rust via rustup now? [Y/n] " answer
+    case "${answer,,}" in
+        n|no) die "Rust is required. Install from https://rustup.rs and re-run." ;;
+    esac
+
+    info "Installing Rust via rustup..."
+    command -v curl >/dev/null 2>&1 || die "curl is required to install rustup."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+
+    # Source the env so cargo is available in the rest of this script
+    # shellcheck source=/dev/null
+    source "$HOME/.cargo/env"
+
+    command -v cargo >/dev/null 2>&1 || die "rustup install finished but cargo still not found."
+    info "Rust installed: $(rustc --version)"
+}
+
+ensure_rust
+
+# ── locate source ──────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CRATE_DIR="$SCRIPT_DIR/tester"
+[ -f "$CRATE_DIR/Cargo.toml" ] || die "Cargo.toml not found at $CRATE_DIR"
+
+# ── build ──────────────────────────────────────────────────────────────────
+info "Building $BINARY (release + native CPU optimisations)..."
+RUSTFLAGS="-C target-cpu=native" \
+    cargo build --release --manifest-path "$CRATE_DIR/Cargo.toml"
+
+BUILT="$CRATE_DIR/target/release/$BINARY"
+[ -f "$BUILT" ] || die "Build succeeded but binary not found at $BUILT"
+
+# ── install ────────────────────────────────────────────────────────────────
+# Prefer ~/.local/bin when not root (no sudo needed)
+if [ "$EUID" -ne 0 ] && [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
+    LOCAL_BIN="$HOME/.local/bin"
+    mkdir -p "$LOCAL_BIN"
+    INSTALL_DIR="$LOCAL_BIN"
+    warn "Not root — installing to $INSTALL_DIR instead of /usr/local/bin"
+    warn "Make sure $INSTALL_DIR is in your PATH."
+fi
+
+info "Installing $BINARY -> $INSTALL_DIR/$BINARY"
+install -m 755 "$BUILT" "$INSTALL_DIR/$BINARY"
+
+# ── PATH hint ──────────────────────────────────────────────────────────────
+if ! echo ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
+    warn "$INSTALL_DIR is not in your PATH."
+    warn "Add this to your shell rc file:"
+    warn "  export PATH=\"$INSTALL_DIR:\$PATH\""
+fi
+
+info "Done. Run: $BINARY"
