@@ -126,7 +126,9 @@ fn avg_three<F: FnMut() -> u64>(label: &str, mut f: F) -> u64 {
 fn net_download() -> Result<f64, Box<dyn std::error::Error>> {
     // 100 MiB
     let url = "https://speed.cloudflare.com/__down?bytes=104857600";
-    let resp = ureq::get(url).call()?;
+    let resp = ureq::get(url)
+        .set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        .call()?;
     let mut reader = resp.into_reader();
     let mut buf = vec![0u8; 64 * 1024];
     let start = Instant::now();
