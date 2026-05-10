@@ -142,17 +142,6 @@ fn net_download() -> Result<f64, Box<dyn std::error::Error>> {
     Ok((total as f64 * 8.0) / (secs * 1_000_000.0)) // Mbps
 }
 
-fn net_upload() -> Result<f64, Box<dyn std::error::Error>> {
-    let url = "https://speed.cloudflare.com/__up";
-    let size: usize = 50 * 1024 * 1024; // 50 MiB
-    let data = vec![0u8; size];
-    let start = Instant::now();
-    let _ = ureq::post(url)
-    .set("Content-Type", "application/octet-stream")
-    .send_bytes(&data)?;
-    let secs = start.elapsed().as_secs_f64().max(1e-9);
-    Ok((size as f64 * 8.0) / (secs * 1_000_000.0)) // Mbps
-}
 
 // ============================================================
 // Storage — write + read a big file
@@ -226,16 +215,10 @@ fn main() {
     println!("  Speedup (MT / ST): {:.2}×\n", speedup);
 
     // ---------- Network ----------
-    println!("[2] Network — Cloudflare speed test endpoints");
+    println!("[2] Network — download speed");
     print!("  Download (100 MB)... ");
     std::io::stdout().flush().ok();
     match net_download() {
-        Ok(v) => println!("{:.2} Mbps", v),
-        Err(e) => println!("failed: {}", e),
-    }
-    print!("  Upload   (50 MB)... ");
-    std::io::stdout().flush().ok();
-    match net_upload() {
         Ok(v) => println!("{:.2} Mbps", v),
         Err(e) => println!("failed: {}", e),
     }
