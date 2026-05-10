@@ -120,13 +120,34 @@ fn avg_three<F: FnMut() -> u64>(label: &str, mut f: F) -> u64 {
 }
 
 // ============================================================
-// Network — Cloudflare speed test endpoints
+// Network — Cloudflare speed test
 // ============================================================
 
+fn cf_get(url: &str) -> Result<ureq::Response, Box<dyn std::error::Error>> {
+    Ok(ureq::get(url)
+        .set("Origin", "https://speed.cloudflare.com")
+        .set("Referer", "https://speed.cloudflare.com/")
+        .call()?)
+}
+
+fn net_latency() -> Result<f64, Box<dyn std::error::Error>> {
+    let url = "https://speed.cloudflare.com/__down?bytes=0";
+    let mut times = Vec::with_capacity(10);
+    for _ in 0..10 {
+        let start = Instant::now();
+        let resp = cf_get(url)?;
+        let mut buf = vec![0u8; 1024];
+        let mut reader = resp.into_reader();
+        while reader.read(&mut buf)? > 0 {}
+        times.push(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    Ok(times[times.len() / 2]) // median
+}
+
 fn net_download() -> Result<f64, Box<dyn std::error::Error>> {
-    // 100 MB test file — plain file server, no bot protection
-    let url = "https://proof.ovh.net/files/100Mb.dat";
-    let resp = ureq::get(url).call()?;
+    let url = "https://speed.cloudflare.com/__down?bytes=104857600";
+    let resp = cf_get(url)?;
     let mut reader = resp.into_reader();
     let mut buf = vec![0u8; 64 * 1024];
     let start = Instant::now();
@@ -139,7 +160,21 @@ fn net_download() -> Result<f64, Box<dyn std::error::Error>> {
         }
     }
     let secs = start.elapsed().as_secs_f64().max(1e-9);
-    Ok((total as f64 * 8.0) / (secs * 1_000_000.0)) // Mbps
+    Ok((total as f64 * 8.0) / (secs * 1_000_000.0))
+}
+
+fn net_upload() -> Result<f64, Box<dyn std::error::Error>> {
+    let url = "https://speed.cloudflare.com/__up";
+    let size: usize = 52_428_800; // 50 MiB
+    let data = vec![0u8; size];
+    let start = Instant::now();
+    let _ = ureq::post(url)
+        .set("Content-Type", "application/octet-stream")
+        .set("Origin", "https://speed.cloudflare.com")
+        .set("Referer", "https://speed.cloudflare.com/")
+        .send_bytes(&data)?;
+    let secs = start.elapsed().as_secs_f64().max(1e-9);
+    Ok((size as f64 * 8.0) / (secs * 1_000_000.0))
 }
 
 
@@ -215,10 +250,22 @@ fn main() {
     println!("  Speedup (MT / ST): {:.2}×\n", speedup);
 
     // ---------- Network ----------
-    println!("[2] Network — download speed");
-    print!("  Download (100 MB)... ");
+    println!("[2] Network — Cloudflare speed test\n");
+    print!("  Latency (10 pings, median)... ");
+    std::io::stdout().flush().ok();
+    match net_latency() {
+        Ok(v) => println!("{:.2} ms", v),
+        Err(e) => println!("failed: {}", e),
+    }
+    print!("  Download (100 MB)...          ");
     std::io::stdout().flush().ok();
     match net_download() {
+        Ok(v) => println!("{:.2} Mbps", v),
+        Err(e) => println!("failed: {}", e),
+    }
+    print!("  Upload   (50 MB)...           ");
+    std::io::stdout().flush().ok();
+    match net_upload() {
         Ok(v) => println!("{:.2} Mbps", v),
         Err(e) => println!("failed: {}", e),
     }
