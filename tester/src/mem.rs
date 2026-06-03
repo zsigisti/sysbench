@@ -41,7 +41,7 @@ pub fn run() -> MemResults {
         }
         let secs = t0.elapsed().as_secs_f64();
         unsafe {
-            std::ptr::read_volatile(&a[0]);
+            std::ptr::read_volatile(&b[0]);
         }
         copy_runs.push(gbs(bytes_2n, secs));
     }

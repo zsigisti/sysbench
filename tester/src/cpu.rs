@@ -108,6 +108,14 @@ fn pin_to_core(idx: usize) {
     }
 }
 
+fn pick_core(core_ids: &[core_affinity::CoreId], idx: usize) -> Option<core_affinity::CoreId> {
+    if core_ids.is_empty() {
+        None
+    } else {
+        core_ids.get(idx % core_ids.len()).copied()
+    }
+}
+
 // ---------- BBP single ----------
 fn bbp_single_run(dur: Duration) -> f64 {
     pin_to_core(0);
@@ -132,7 +140,7 @@ fn bbp_multi_run(dur: Duration, threads: usize) -> f64 {
     let start = Instant::now();
 
     for i in 0..threads {
-        let pin = core_ids.get(i).copied();
+        let pin = pick_core(&core_ids, i);
         handles.push(thread::spawn(move || -> u64 {
             if let Some(id) = pin {
                 let _ = core_affinity::set_for_current(id);
@@ -193,7 +201,7 @@ fn sha_multi_run(dur: Duration, threads: usize) -> f64 {
     let mut handles = Vec::with_capacity(threads);
     let start = Instant::now();
     for i in 0..threads {
-        let pin = core_ids.get(i).copied();
+        let pin = pick_core(&core_ids, i);
         handles.push(thread::spawn(move || -> u64 {
             if let Some(id) = pin {
                 let _ = core_affinity::set_for_current(id);
@@ -267,7 +275,7 @@ fn matmul_multi_run(dur: Duration, threads: usize) -> f64 {
     let core_ids = core_affinity::get_core_ids().unwrap_or_default();
     let mut handles = Vec::with_capacity(threads);
     for i in 0..threads {
-        let pin = core_ids.get(i).copied();
+        let pin = pick_core(&core_ids, i);
         handles.push(thread::spawn(move || -> f64 {
             if let Some(id) = pin {
                 let _ = core_affinity::set_for_current(id);
@@ -334,7 +342,7 @@ fn lz4_multi_run(dur: Duration, threads: usize) -> f64 {
     let mut handles = Vec::with_capacity(threads);
     let start = Instant::now();
     for i in 0..threads {
-        let pin = core_ids.get(i).copied();
+        let pin = pick_core(&core_ids, i);
         handles.push(thread::spawn(move || -> u64 {
             if let Some(id) = pin {
                 let _ = core_affinity::set_for_current(id);
@@ -405,7 +413,7 @@ fn sort_multi_run(dur: Duration, threads: usize) -> f64 {
     let mut handles = Vec::with_capacity(threads);
     let start = Instant::now();
     for i in 0..threads {
-        let pin = core_ids.get(i).copied();
+        let pin = pick_core(&core_ids, i);
         handles.push(thread::spawn(move || -> u64 {
             if let Some(id) = pin {
                 let _ = core_affinity::set_for_current(id);
