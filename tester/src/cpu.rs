@@ -2,8 +2,6 @@
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -129,40 +127,40 @@ fn bbp_single_run(dur: Duration) -> f64 {
 }
 
 fn bbp_multi_run(dur: Duration, threads: usize) -> f64 {
-    let counter = Arc::new(AtomicU64::new(0));
-    let stop = Arc::new(AtomicBool::new(false));
-    let mut handles = Vec::with_capacity(threads);
-
     let core_ids = core_affinity::get_core_ids().unwrap_or_default();
+    let mut handles = Vec::with_capacity(threads);
+    let start = Instant::now();
 
     for i in 0..threads {
-        let counter = counter.clone();
-        let stop = stop.clone();
         let pin = core_ids.get(i).copied();
-        handles.push(thread::spawn(move || {
+        handles.push(thread::spawn(move || -> u64 {
             if let Some(id) = pin {
                 let _ = core_affinity::set_for_current(id);
             }
-            while !stop.load(Ordering::Relaxed) {
-                let start_n = counter.fetch_add(50, Ordering::Relaxed);
-                for k in 0..50u64 {
-                    let d = bbp_hex_digit(start_n + k);
+            // Independent range per thread — zero shared state, zero contention
+            let mut n = (i as u64).wrapping_mul(1_000_000);
+            let t0 = Instant::now();
+            let mut count: u64 = 0;
+            while t0.elapsed() < dur {
+                for _ in 0..50 {
+                    let d = bbp_hex_digit(n);
                     unsafe {
                         std::ptr::read_volatile(&d);
                     }
+                    n += 1;
                 }
+                count += 50;
             }
+            count
         }));
     }
 
-    let start = Instant::now();
-    thread::sleep(dur);
-    stop.store(true, Ordering::Relaxed);
+    let mut total: u64 = 0;
     for h in handles {
-        let _ = h.join();
+        total += h.join().unwrap_or(0);
     }
     let secs = start.elapsed().as_secs_f64().max(1e-9);
-    (counter.load(Ordering::Relaxed) as f64) / secs
+    (total as f64) / secs
 }
 
 // ============================================================

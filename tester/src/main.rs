@@ -10,6 +10,7 @@ mod mem;
 mod net;
 mod stats;
 mod sysinfo;
+mod upload;
 
 #[derive(Parser)]
 #[command(name = "sysbench", about = "System benchmark", version)]
@@ -28,6 +29,9 @@ struct Cli {
 
     #[arg(long, global = true, default_value = "4", help = "Parallel download streams")]
     streams: usize,
+
+    #[arg(long, global = true, help = "Upload results to paste.rs and print URL")]
+    upload: bool,
 }
 
 #[derive(Subcommand)]
@@ -104,32 +108,46 @@ fn main() {
         }
     }
 
+    let full = FullResults {
+        sysinfo: info,
+        cpu: cpu_res,
+        mem: mem_res,
+        net: net_res,
+        disk: disk_res,
+    };
+
     if cli.json {
-        let full = FullResults {
-            sysinfo: info,
-            cpu: cpu_res,
-            mem: mem_res,
-            net: net_res,
-            disk: disk_res,
-        };
         match serde_json::to_string_pretty(&full) {
             Ok(s) => println!("{}", s),
             Err(e) => eprintln!("JSON serialization failed: {}", e),
         }
     } else {
-        if let Some(c) = &cpu_res {
+        if let Some(c) = &full.cpu {
             print_cpu(c, cli.duration, cli.runs);
         }
-        if let Some(m) = &mem_res {
+        if let Some(m) = &full.mem {
             print_mem(m);
         }
-        if let Some(n) = &net_res {
+        if let Some(n) = &full.net {
             print_net(n, cli.streams);
         }
-        if let Some(d) = &disk_res {
+        if let Some(d) = &full.disk {
             print_disk(d);
         }
         println!("===================================================");
+    }
+
+    if cli.upload {
+        match serde_json::to_string_pretty(&full) {
+            Ok(json) => {
+                print!("Uploading results... ");
+                match upload::upload(&json) {
+                    Ok(url) => println!("\nResults: {}", url),
+                    Err(e) => eprintln!("\nUpload failed: {}", e),
+                }
+            }
+            Err(e) => eprintln!("Upload skipped (JSON error): {}", e),
+        }
     }
 }
 
