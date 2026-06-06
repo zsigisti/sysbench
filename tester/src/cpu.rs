@@ -145,8 +145,12 @@ fn bbp_multi_run(dur: Duration, threads: usize) -> f64 {
             if let Some(id) = pin {
                 let _ = core_affinity::set_for_current(id);
             }
-            // Independent range per thread — zero shared state, zero contention
-            let mut n = (i as u64).wrapping_mul(1_000_000);
+            // Each thread does the same work as ST (starts at 0). bbp_hex_digit
+            // is O(n), so threads MUST cover the same low-n range to measure raw
+            // throughput — offsetting the start index would explode per-digit cost.
+            // No shared state, so no contention; redundant digits are fine.
+            let _ = i;
+            let mut n: u64 = 0;
             let t0 = Instant::now();
             let mut count: u64 = 0;
             while t0.elapsed() < dur {

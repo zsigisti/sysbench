@@ -1,11 +1,16 @@
 [package]
 name = "tester"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
+autobins = false
 
 [[bin]]
 name = "sysbench"
 path = "src/main.rs"
+
+[[bin]]
+name = "sysinfo"
+path = "src/bin/sysinfo.rs"
 
 [dependencies]
 ureq = "2.10"

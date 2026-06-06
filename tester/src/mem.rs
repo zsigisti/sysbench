@@ -4,6 +4,7 @@
 // 5 iterations per kernel, median GB/s reported.
 
 use serde::Serialize;
+use std::hint::black_box;
 use std::time::Instant;
 
 use crate::stats;
@@ -32,59 +33,61 @@ pub fn run() -> MemResults {
     let bytes_2n = 2.0 * N as f64 * 8.0;
     let bytes_3n = 3.0 * N as f64 * 8.0;
 
+    // black_box() barriers around each kernel prevent dead-store elimination:
+    // without them, a later kernel that overwrites an array makes the earlier
+    // kernel's stores dead and LLVM deletes the whole loop (giving fake TB/s).
+
     // Copy: b[i] = a[i]
     let mut copy_runs = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
+        black_box(&a);
         let t0 = Instant::now();
         for i in 0..N {
             b[i] = a[i];
         }
+        black_box(&b);
         let secs = t0.elapsed().as_secs_f64();
-        unsafe {
-            std::ptr::read_volatile(&b[0]);
-        }
         copy_runs.push(gbs(bytes_2n, secs));
     }
 
     // Scale: b[i] = scalar * c[i]
     let mut scale_runs = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
+        black_box(&c);
         let t0 = Instant::now();
         for i in 0..N {
             b[i] = SCALAR * c[i];
         }
+        black_box(&b);
         let secs = t0.elapsed().as_secs_f64();
-        unsafe {
-            std::ptr::read_volatile(&a[0]);
-        }
         scale_runs.push(gbs(bytes_2n, secs));
     }
 
     // Add: c[i] = a[i] + b[i]
     let mut add_runs = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
+        black_box(&a);
+        black_box(&b);
         let t0 = Instant::now();
         for i in 0..N {
             c[i] = a[i] + b[i];
         }
+        black_box(&c);
         let secs = t0.elapsed().as_secs_f64();
-        unsafe {
-            std::ptr::read_volatile(&a[0]);
-        }
         add_runs.push(gbs(bytes_3n, secs));
     }
 
     // Triad: a[i] = b[i] + scalar * c[i]
     let mut triad_runs = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
+        black_box(&b);
+        black_box(&c);
         let t0 = Instant::now();
         for i in 0..N {
             a[i] = b[i] + SCALAR * c[i];
         }
+        black_box(&a);
         let secs = t0.elapsed().as_secs_f64();
-        unsafe {
-            std::ptr::read_volatile(&a[0]);
-        }
         triad_runs.push(gbs(bytes_3n, secs));
     }
 

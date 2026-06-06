@@ -30,8 +30,8 @@ struct Cli {
     #[arg(long, global = true, default_value = "4", help = "Parallel download streams")]
     streams: usize,
 
-    #[arg(long, global = true, help = "Upload results to paste.rs and print URL")]
-    upload: bool,
+    #[arg(long, global = true, help = "Do not upload results (upload is on by default)")]
+    no_upload: bool,
 }
 
 #[derive(Subcommand)]
@@ -137,13 +137,14 @@ fn main() {
         println!("===================================================");
     }
 
-    if cli.upload {
+    if !cli.no_upload {
         match serde_json::to_string_pretty(&full) {
             Ok(json) => {
-                print!("Uploading results... ");
+                println!();
+                print!("Uploading results to paste.rs ... ");
                 match upload::upload(&json) {
-                    Ok(url) => println!("\nResults: {}", url),
-                    Err(e) => eprintln!("\nUpload failed: {}", e),
+                    Ok(url) => println!("done\n  Results: {}\n  (use --no-upload to disable)", url),
+                    Err(e) => eprintln!("failed: {}", e),
                 }
             }
             Err(e) => eprintln!("Upload skipped (JSON error): {}", e),

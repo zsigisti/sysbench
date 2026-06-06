@@ -26,10 +26,53 @@ pub struct DiskResults {
 const CHUNK: usize = 4 * 1024 * 1024; // 4 MiB
 const RAND_OPS: usize = 1000;
 const RAND_BLOCK: usize = 4096;
+const MIN_FILE: u64 = 256 * 1024 * 1024; // 256 MiB — below this the test is meaningless
 
 fn choose_file_size(ram_mib: u64) -> u64 {
     let target = (ram_mib * 2).max(2048) * 1024 * 1024;
     target.min(4 * 1024 * 1024 * 1024)
+}
+
+/// Free bytes available to an unprivileged user on the filesystem holding `dir`.
+#[cfg(unix)]
+fn available_bytes(dir: &Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let c = CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
+        return None;
+    }
+    Some(s.f_bavail as u64 * s.f_frsize as u64)
+}
+
+#[cfg(not(unix))]
+fn available_bytes(_dir: &Path) -> Option<u64> {
+    None
+}
+
+/// Clamp the target file size so the benchmark never tries to fill the disk.
+/// Uses at most half of the free space and leaves headroom; errors if the
+/// filesystem can't host a meaningful test.
+fn fit_to_space(dir: &Path, target: u64) -> std::io::Result<u64> {
+    let mut size = target;
+    if let Some(avail) = available_bytes(dir) {
+        let usable = (avail / 2).min(avail.saturating_sub(avail / 10));
+        size = size.min(usable);
+    }
+    size = (size / CHUNK as u64) * CHUNK as u64; // align to CHUNK
+    if size < MIN_FILE {
+        let avail_mib = available_bytes(dir).unwrap_or(0) / (1024 * 1024);
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!(
+                "not enough free space in {} ({} MiB available, need ~512 MiB) — skipping disk test",
+                dir.display(),
+                avail_mib
+            ),
+        ));
+    }
+    Ok(size)
 }
 
 // ---------- Cleanup guard ----------
@@ -312,10 +355,11 @@ fn rand_write(path: &Path, file_size: u64) -> std::io::Result<(f64, f64)> {
 // ============================================================
 
 pub fn run(ram_mib: u64) -> std::io::Result<DiskResults> {
-    let file_size = choose_file_size(ram_mib);
+    let dir: PathBuf = std::env::temp_dir();
+    let file_size = fit_to_space(&dir, choose_file_size(ram_mib))?;
     let file_size_mib = file_size / (1024 * 1024);
 
-    let mut path: PathBuf = std::env::temp_dir();
+    let mut path: PathBuf = dir;
     path.push("sysbench_scratch.bin");
     let _guard = TempPath(path.clone());
 

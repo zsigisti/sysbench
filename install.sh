@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BINARY="sysbench"
+BINARIES=(sysbench sysinfo)
 INSTALL_DIR="/usr/local/bin"
 
 # ── colours ────────────────────────────────────────────────────────────────
@@ -87,12 +87,14 @@ cleanup() { [ -n "$CLONED_DIR" ] && rm -rf "$CLONED_DIR"; }
 trap cleanup EXIT
 
 # ── build ──────────────────────────────────────────────────────────────────
-info "Building $BINARY (release + native CPU optimisations)..."
+info "Building ${BINARIES[*]} (release + native CPU optimisations)..."
 RUSTFLAGS="-C target-cpu=native" \
     cargo build --release --manifest-path "$CRATE_DIR/Cargo.toml"
 
-BUILT="$CRATE_DIR/target/release/$BINARY"
-[ -f "$BUILT" ] || die "Build succeeded but binary not found at $BUILT"
+for b in "${BINARIES[@]}"; do
+    [ -f "$CRATE_DIR/target/release/$b" ] \
+        || die "Build succeeded but binary not found at $CRATE_DIR/target/release/$b"
+done
 
 # ── install ────────────────────────────────────────────────────────────────
 # Prefer ~/.local/bin when not root (no sudo needed)
@@ -104,8 +106,10 @@ if [ "$EUID" -ne 0 ] && [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
     warn "Make sure $INSTALL_DIR is in your PATH."
 fi
 
-info "Installing $BINARY -> $INSTALL_DIR/$BINARY"
-install -m 755 "$BUILT" "$INSTALL_DIR/$BINARY"
+for b in "${BINARIES[@]}"; do
+    info "Installing $b -> $INSTALL_DIR/$b"
+    install -m 755 "$CRATE_DIR/target/release/$b" "$INSTALL_DIR/$b"
+done
 
 # ── PATH hint ──────────────────────────────────────────────────────────────
 if ! echo ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
@@ -114,4 +118,4 @@ if ! echo ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
     warn "  export PATH=\"$INSTALL_DIR:\$PATH\""
 fi
 
-info "Done. Run: $BINARY"
+info "Done. Run: ${BINARIES[0]}  (or: ${BINARIES[1]})"
