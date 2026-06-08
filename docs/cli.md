@@ -44,6 +44,13 @@ no upload ever happen in this mode.
 If the binary is invoked under the name `sysinfo` (the installer and packages
 create this symlink), it behaves exactly like `crux info`.
 
+### `crux man` / `crux completions <shell>` (hidden)
+
+Packaging helpers, hidden from `--help`. `crux man` prints a roff man page;
+`crux completions <bash|zsh|fish|elvish|powershell>` prints a completion script.
+Both write to stdout. The installer and packagers use these to install
+`/usr/share/man/man1/crux.1` and shell completions.
+
 ## Global flags
 
 | Flag | Default | Applies to | Description |

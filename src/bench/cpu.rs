@@ -300,16 +300,31 @@ fn make_lz4_buf() -> Vec<u8> {
     buf
 }
 
+// Compress `data` into the reused `out` buffer once. Returns the byte the
+// volatile read touched (defeats dead-code elimination without a per-iteration
+// heap allocation). Using `compress_into` instead of `compress_prepend_size`
+// is essential: the latter allocates a fresh Vec every call, so the loop ends
+// up measuring the allocator — which serialises single-threaded but uses
+// per-thread arenas multi-threaded, producing fake ~50x "scaling".
+fn lz4_compress_once(data: &[u8], out: &mut [u8]) {
+    let n = lz4_flex::block::compress_into(data, out).unwrap_or(0);
+    unsafe {
+        std::ptr::read_volatile(&out[n.min(out.len() - 1)]);
+    }
+}
+
+fn lz4_out_buf() -> Vec<u8> {
+    vec![0u8; lz4_flex::block::get_maximum_output_size(LZ4_BLOCK)]
+}
+
 fn lz4_single_run(dur: Duration) -> f64 {
     let _pin = PinGuard::pin(0);
     let data = make_lz4_buf();
+    let mut out = lz4_out_buf();
     let start = Instant::now();
     let mut iters: u64 = 0;
     while start.elapsed() < dur {
-        let out = lz4_flex::compress_prepend_size(&data);
-        unsafe {
-            std::ptr::read_volatile(&out[0]);
-        }
+        lz4_compress_once(&data, &mut out);
         iters += 1;
     }
     let secs = start.elapsed().as_secs_f64().max(1e-9);
@@ -325,13 +340,11 @@ fn lz4_multi_run(dur: Duration, threads: usize) -> f64 {
         handles.push(thread::spawn(move || -> u64 {
             affinity::pin_worker(i);
             let data = make_lz4_buf();
+            let mut out = lz4_out_buf();
             let t0 = Instant::now();
             let mut iters: u64 = 0;
             while t0.elapsed() < dur {
-                let out = lz4_flex::compress_prepend_size(&data);
-                unsafe {
-                    std::ptr::read_volatile(&out[0]);
-                }
+                lz4_compress_once(&data, &mut out);
                 iters += 1;
             }
             iters
@@ -463,7 +476,7 @@ pub fn run(dur: Duration, runs: usize) -> CpuResults {
         bbp_st.median / 5000.0,
         sha256_st.median / 500.0,
         matmul_st.median / 10.0,
-        lz4_st.median / 1000.0,
+        lz4_st.median / 10000.0,
         sort_st.median / 50.0,
     ]) * 1000.0;
 
@@ -494,7 +507,7 @@ pub fn run(dur: Duration, runs: usize) -> CpuResults {
         bbp_mt.median / 5000.0,
         sha256_mt.median / 500.0,
         matmul_mt.median / 10.0,
-        lz4_mt.median / 1000.0,
+        lz4_mt.median / 10000.0,
         sort_mt.median / 50.0,
     ]) * 1000.0;
 

@@ -50,6 +50,15 @@ composite_st`.
    threads now start at `n = 0`; there's no shared state, so redundant digits
    are harmless and the measurement reflects raw per-core throughput.
 
+3. **LZ4 measured the allocator, not LZ4.** The compress loop used
+   `compress_prepend_size`, which **allocates a fresh `Vec` every iteration**.
+   Single-threaded, glibc malloc serialises and the alloc/free dominated,
+   pinning ST to ~3 GB/s; multi-threaded, per-thread arenas made allocation
+   nearly free, so MT looked like a physically-impossible **~65× scaling** on
+   20 cores. Switched to `compress_into` with a reused output buffer: true ST is
+   ~30 GB/s and MT scaling is a sane ~7× (memory-scan bound, like Sort). The
+   composite-score divisor for LZ4 was rescaled (1000 → 10000) to match.
+
 > **Reading the speedup.** Expect near-linear scaling for compute-bound tests
 > (SHA, MatMul, BBP) and **sub-linear** scaling for memory-bound ones (Sort
 > thrashes ~8 MB per thread, so it saturates the memory subsystem well before

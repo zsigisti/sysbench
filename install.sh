@@ -108,6 +108,31 @@ install -m 755 "$BIN_PATH" "$INSTALL_DIR/$BIN"
 info "Linking $ALIAS -> $BIN (so '$ALIAS' runs 'crux info')"
 ln -sf "$BIN" "$INSTALL_DIR/$ALIAS"
 
+# ── man page + shell completions (best-effort) ─────────────────────────────
+CRUX="$INSTALL_DIR/$BIN"
+if [ "$EUID" -eq 0 ]; then
+    MAN_DIR="/usr/local/share/man/man1"
+    BASH_DIR="/usr/share/bash-completion/completions"
+    ZSH_DIR="/usr/share/zsh/site-functions"
+    FISH_DIR="/usr/share/fish/vendor_completions.d"
+else
+    MAN_DIR="$HOME/.local/share/man/man1"
+    BASH_DIR="$HOME/.local/share/bash-completion/completions"
+    ZSH_DIR="$HOME/.local/share/zsh/site-functions"
+    FISH_DIR="$HOME/.config/fish/completions"
+fi
+gen_into() { # <dir> <file> <crux-args...>
+    local dir="$1" file="$2"; shift 2
+    mkdir -p "$dir" 2>/dev/null || return 0
+    if "$CRUX" "$@" > "$dir/$file" 2>/dev/null; then
+        info "Installed $dir/$file"
+    fi
+}
+gen_into "$MAN_DIR"  "crux.1"     man
+gen_into "$BASH_DIR" "crux"       completions bash
+gen_into "$ZSH_DIR"  "_crux"      completions zsh
+gen_into "$FISH_DIR" "crux.fish"  completions fish
+
 # ── PATH hint ──────────────────────────────────────────────────────────────
 if ! echo ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
     warn "$INSTALL_DIR is not in your PATH."

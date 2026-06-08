@@ -40,11 +40,31 @@ AUR git repo named `crucible`:
 makepkg --printsrcinfo > .SRCINFO
 ```
 
+## Man page & shell completions
+
+`crux` generates its own man page and completions from the real CLI:
+
+```sh
+crux man                  # roff man page → stdout
+crux completions bash     # also: zsh | fish | elvish | powershell
+```
+
+The AUR `PKGBUILD` calls these directly in `package()`. For deb/rpm, the asset
+lists reference `target/assets/`, so run the generator first:
+
+```sh
+packaging/gen-assets.sh   # writes target/assets/{crux.1,completions/*}
+```
+
+`install.sh` installs the man page and bash/zsh/fish completions automatically
+(to system dirs as root, `~/.local`/`~/.config` otherwise).
+
 ## Debian / Ubuntu (`cargo deb`)
 
 ```sh
 cargo install cargo-deb
-cargo deb            # produces target/debian/crucible_<ver>_<arch>.deb
+packaging/gen-assets.sh   # man page + completions (see above)
+cargo deb                 # produces target/debian/crucible_<ver>_<arch>.deb
 sudo dpkg -i target/debian/crucible_*.deb
 ```
 
@@ -63,6 +83,7 @@ RUSTFLAGS="-C target-cpu=native" cargo deb
 ```sh
 cargo install cargo-generate-rpm
 RUSTFLAGS="-C target-cpu=native" cargo build --release
+packaging/gen-assets.sh  # man page + completions
 cargo generate-rpm  # produces target/generate-rpm/crucible-<ver>.<arch>.rpm
 sudo rpm -i target/generate-rpm/crucible-*.rpm
 ```

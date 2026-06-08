@@ -7,7 +7,8 @@
 // Invoking the binary as `sysinfo` (e.g. via the install symlink) is equivalent
 // to `crux info`.
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -63,6 +64,15 @@ enum Command {
     },
     /// Deep system report (fastfetch, but deeper) — no benchmarking, no upload
     Info,
+    /// Print a roff man page to stdout (used by packagers)
+    #[command(hide = true)]
+    Man,
+    /// Print a shell completion script to stdout (used by packagers)
+    #[command(hide = true)]
+    Completions {
+        /// Target shell
+        shell: Shell,
+    },
 }
 
 #[derive(Subcommand, Clone, Copy)]
@@ -110,15 +120,29 @@ fn main() {
 
     let cli = Cli::parse();
 
-    if let Some(Command::Info) = cli.command {
-        report::run();
-        return;
+    // Commands that produce output and exit immediately.
+    match &cli.command {
+        Some(Command::Info) => {
+            report::run();
+            return;
+        }
+        Some(Command::Man) => {
+            let _ = clap_mangen::Man::new(Cli::command()).render(&mut std::io::stdout());
+            return;
+        }
+        Some(Command::Completions { shell }) => {
+            let mut cmd = Cli::command();
+            let name = cmd.get_name().to_string();
+            clap_complete::generate(*shell, &mut cmd, name, &mut std::io::stdout());
+            return;
+        }
+        _ => {}
     }
 
     let suite: Suite = match cli.command {
         Some(Command::Bench { suite }) => suite.into(),
         None => Suite::All,
-        Some(Command::Info) => unreachable!(),
+        _ => unreachable!(),
     };
 
     let cfg = Config {
