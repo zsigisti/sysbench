@@ -13,10 +13,29 @@ pub mod upload;
 
 use std::time::Duration;
 
-/// Run a suite by name and return the human-readable report as a String.
-/// `kind` is one of: `all`, `cpu`, `mem`, `net`, `disk`, `info`. This is the
-/// single entry point the GUI uses so it shares the CLI's exact measurements.
-pub fn run_named(kind: &str) -> String {
+/// Tunables for a GUI/library run. Mirrors the CLI's global flags.
+#[derive(Clone, Copy)]
+pub struct RunOpts {
+    pub duration_secs: u64,
+    pub runs: usize,
+    pub streams: usize,
+}
+
+impl Default for RunOpts {
+    fn default() -> Self {
+        Self {
+            duration_secs: 10,
+            runs: 5,
+            streams: 4,
+        }
+    }
+}
+
+/// Run a single suite by name with explicit options and return the
+/// human-readable report as a String. `kind` is one of `cpu`, `mem`, `net`,
+/// `disk`, `all`, `info`. This is the shared entry point the GUI uses so it
+/// produces exactly the CLI's measurements.
+pub fn run_suite_text(kind: &str, opts: &RunOpts) -> String {
     if kind == "info" {
         return report::render(false);
     }
@@ -28,12 +47,17 @@ pub fn run_named(kind: &str) -> String {
         _ => bench::Suite::All,
     };
     let cfg = bench::Config {
-        duration: Duration::from_secs(10),
-        runs: 5,
-        streams: 4,
+        duration: Duration::from_secs(opts.duration_secs.max(1)),
+        runs: opts.runs.max(1),
+        streams: opts.streams.max(1),
         dir: None,
     };
     let info = sysinfo::SysInfo::collect();
     let full = bench::run(suite, &cfg, info);
     bench::format_results(&full, &cfg)
+}
+
+/// Convenience: [`run_suite_text`] with default options.
+pub fn run_named(kind: &str) -> String {
+    run_suite_text(kind, &RunOpts::default())
 }

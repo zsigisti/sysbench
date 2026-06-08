@@ -36,10 +36,18 @@ Build dependencies:
 ## What it does
 
 - Buttons to run the **Full Benchmark** or any individual suite (CPU, Memory,
-  Network, Storage), plus **System Info**.
-- Runs the work on a background thread (the UI stays responsive) and streams the
-  status back via Qt signals.
+  Network, Storage), plus **System Info** (shown automatically on launch).
+- **Duration** and **Runs** settings feed straight into the CPU suites.
+- The **Full Benchmark** streams each suite's results into the pane as it
+  finishes, rather than one long opaque wait.
+- **Share** uploads the report to paste.rs and shows the URL; **Copy** copies it
+  to the clipboard; **Clear** resets the pane.
+- Runs the work on a background thread (the UI stays responsive) and marshals
+  results back via Qt signals.
 - Shows the same human-readable report as `crux`, in a monospace results pane.
+
+Uninstall (binary + desktop entry + icon) via the repo's
+`./install.sh --uninstall`.
 
 ## Layout
 

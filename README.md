@@ -57,6 +57,12 @@ builds with `-C target-cpu=native`, and installs to `~/.local/bin` (or
 `man crux` page, and shell completions; the GUI install also adds a desktop
 entry + icon. From a local clone: `./install.sh [--gui|--all]`.
 
+Uninstall everything the script installed:
+
+```sh
+./install.sh --uninstall
+```
+
 ### Packages (AUR / deb / rpm)
 
 CRUCIBLE is designed to be **built on the target host** so the benchmark

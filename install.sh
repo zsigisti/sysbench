@@ -15,12 +15,14 @@ ALIAS="sysinfo"
 GUI_BIN="crux-gui"
 INSTALL_DIR="/usr/local/bin"
 
+ACTION=install
 WANT_CLI=1
 WANT_GUI=0
 case "${1:-}" in
-    ""|--cli)        WANT_CLI=1; WANT_GUI=0 ;;
+    ""|--cli)         WANT_CLI=1; WANT_GUI=0 ;;
     --gui|--gui-only) WANT_CLI=0; WANT_GUI=1 ;;
-    --all)           WANT_CLI=1; WANT_GUI=1 ;;
+    --all)            WANT_CLI=1; WANT_GUI=1 ;;
+    --uninstall)      ACTION=uninstall ;;
     -h|--help)
         cat <<'USAGE'
 CRUCIBLE installer — builds natively on THIS host.
@@ -28,13 +30,14 @@ CRUCIBLE installer — builds natively on THIS host.
   ./install.sh            install the CLI  (crux + sysinfo alias)   [default]
   ./install.sh --gui      install the GUI  (crux-gui + .desktop)    only
   ./install.sh --all      install both
+  ./install.sh --uninstall remove everything CRUCIBLE installed by this script
 
 Over curl:
   curl -sSf <url>/install.sh | bash             # CLI
   curl -sSf <url>/install.sh | bash -s -- --gui # GUI
 USAGE
         exit 0 ;;
-    *) echo "unknown option: $1 (try --cli | --gui | --all)" >&2; exit 1 ;;
+    *) echo "unknown option: $1 (try --cli | --gui | --all | --uninstall)" >&2; exit 1 ;;
 esac
 
 # ── colours ────────────────────────────────────────────────────────────────
@@ -42,6 +45,51 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info()  { echo -e "${GREEN}==>${NC} $*"; }
 warn()  { echo -e "${YELLOW}warn:${NC} $*"; }
 die()   { echo -e "${RED}error:${NC} $*" >&2; exit 1; }
+
+# ── uninstall ──────────────────────────────────────────────────────────────
+# Remove every artifact the installer creates, from both the user (~/.local,
+# ~/.config) and system (/usr/local, /usr/share) locations — whatever exists
+# and we have permission to delete.
+uninstall() {
+    local removed=0
+    rm_v() { if [ -e "$1" ] || [ -L "$1" ]; then rm -f "$1" 2>/dev/null && { info "removed $1"; removed=$((removed+1)); }; fi; }
+
+    local bindirs=("$HOME/.local/bin" "/usr/local/bin" "/usr/bin")
+    for d in "${bindirs[@]}"; do
+        rm_v "$d/crux"; rm_v "$d/sysinfo"; rm_v "$d/crux-gui"
+    done
+
+    # man pages
+    rm_v "$HOME/.local/share/man/man1/crux.1"
+    rm_v "/usr/local/share/man/man1/crux.1"
+    rm_v "/usr/share/man/man1/crux.1"
+    # completions
+    rm_v "$HOME/.local/share/bash-completion/completions/crux"
+    rm_v "/usr/share/bash-completion/completions/crux"
+    rm_v "$HOME/.local/share/zsh/site-functions/_crux"
+    rm_v "/usr/share/zsh/site-functions/_crux"
+    rm_v "$HOME/.config/fish/completions/crux.fish"
+    rm_v "/usr/share/fish/vendor_completions.d/crux.fish"
+    # desktop entry + icon
+    rm_v "$HOME/.local/share/applications/crux-gui.desktop"
+    rm_v "/usr/share/applications/crux-gui.desktop"
+    rm_v "$HOME/.local/share/icons/hicolor/scalable/apps/crucible.svg"
+    rm_v "/usr/share/icons/hicolor/scalable/apps/crucible.svg"
+
+    command -v update-desktop-database >/dev/null 2>&1 \
+        && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+
+    if [ "$removed" -eq 0 ]; then
+        warn "Nothing found to remove (already uninstalled, or installed elsewhere)."
+    else
+        info "Uninstalled CRUCIBLE ($removed item(s) removed)."
+    fi
+}
+
+if [ "$ACTION" = "uninstall" ]; then
+    uninstall
+    exit 0
+fi
 
 # ── ensure a C toolchain is available ──────────────────────────────────────
 ensure_cc() {
