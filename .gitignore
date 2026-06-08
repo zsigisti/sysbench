@@ -2,3 +2,6 @@
 
 # Cargo.lock IS committed: this is a binary/application and packagers
 # (AUR/deb/rpm) build with --locked/--frozen for reproducibility.
+
+# cxx-qt-generated QML language-server config (machine-specific path)
+/gui/.qmlls.ini
