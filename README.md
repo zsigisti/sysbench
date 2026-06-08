@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🔥 CRUCIBLE
+<img src="assets/logo.svg" alt="CRUCIBLE" width="160">
+
+# CRUCIBLE
 
 **Trial by fire for your machine.**
 
@@ -22,6 +24,9 @@ CRUCIBLE compiles **natively on your machine** and puts it through a gauntlet:
 - **`crux info`** — a fast, thorough system report. Think `fastfetch`, but
   deeper: full cache hierarchy, every mounted disk, thermals, batteries, and
   per-interface IPv4/IPv6.
+- **`crux-gui`** — an optional Qt 6 desktop GUI over the same engine. The CLI is
+  fully standalone; the GUI lives in its own crate ([`gui/`](gui/README.md)) and
+  is never required.
 
 The name is an acronym for what it measures:
 **C**ompute · **R**AM · **U**tilization · **C**ache · **I**/O · **B**andwidth ·
@@ -83,6 +88,18 @@ prints a share URL. Disable with `--no-upload`.
 | `--no-upload` | off | Do **not** upload results (upload is on by default) |
 
 Full reference: **[docs/cli.md](docs/cli.md)**.
+
+### GUI (optional)
+
+A Qt 6 desktop front-end lives in [`gui/`](gui/README.md) as a separate crate.
+The CLI never depends on it; build it only if you want it:
+
+```sh
+cargo build -p crucible-gui --release   # needs Qt 6 (qt6-base, qt6-declarative)
+./target/release/crux-gui
+```
+
+A bare `cargo build` builds only the CLI, so CLI users don't need Qt installed.
 
 ---
 

@@ -12,14 +12,8 @@ use clap_complete::Shell;
 use std::path::PathBuf;
 use std::time::Duration;
 
-mod affinity;
-mod bench;
-mod report;
-mod stats;
-mod sysinfo;
-mod upload;
-
-use bench::{Config, Suite};
+use crucible::bench::{self, Config, Suite};
+use crucible::{report, sysinfo, upload};
 
 #[derive(Parser)]
 #[command(
@@ -89,15 +83,15 @@ enum BenchSuite {
     Disk,
 }
 
-impl From<Option<BenchSuite>> for Suite {
-    fn from(s: Option<BenchSuite>) -> Self {
-        match s {
-            None | Some(BenchSuite::All) => Suite::All,
-            Some(BenchSuite::Cpu) => Suite::Cpu,
-            Some(BenchSuite::Mem) => Suite::Mem,
-            Some(BenchSuite::Net) => Suite::Net,
-            Some(BenchSuite::Disk) => Suite::Disk,
-        }
+// Free function rather than `impl From` because `Suite` lives in the external
+// `crucible` crate (orphan rule forbids the trait impl here).
+fn to_suite(s: Option<BenchSuite>) -> Suite {
+    match s {
+        None | Some(BenchSuite::All) => Suite::All,
+        Some(BenchSuite::Cpu) => Suite::Cpu,
+        Some(BenchSuite::Mem) => Suite::Mem,
+        Some(BenchSuite::Net) => Suite::Net,
+        Some(BenchSuite::Disk) => Suite::Disk,
     }
 }
 
@@ -140,7 +134,7 @@ fn main() {
     }
 
     let suite: Suite = match cli.command {
-        Some(Command::Bench { suite }) => suite.into(),
+        Some(Command::Bench { suite }) => to_suite(suite),
         None => Suite::All,
         _ => unreachable!(),
     };

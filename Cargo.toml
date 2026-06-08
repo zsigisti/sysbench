@@ -11,7 +11,19 @@ keywords = ["benchmark", "sysinfo", "stream", "cpu", "storage"]
 categories = ["command-line-utilities", "hardware-support"]
 autobins = false
 
-# Single unified binary: `crux bench` and `crux info`.
+# Workspace: the CLI (this crate) + the GUI live side by side and share the
+# `crucible` library (the benchmark/report engine). A bare `cargo build` only
+# builds the CLI; build the GUI explicitly with `-p crucible-gui`.
+[workspace]
+members = [".", "gui"]
+default-members = ["."]
+
+# The shared engine, used by both the `crux` CLI and the GUI.
+[lib]
+name = "crucible"
+path = "src/lib.rs"
+
+# Unified CLI binary: `crux bench` and `crux info`.
 [[bin]]
 name = "crux"
 path = "src/main.rs"

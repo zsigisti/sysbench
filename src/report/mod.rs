@@ -8,9 +8,17 @@ mod format;
 
 use format::{bar, human_bytes, Style};
 
-/// Render the full system report to stdout.
+/// Detect colour support and print the full system report to stdout (CLI).
 pub fn run() {
-    let st = Style::new();
+    let color = Style::new().on;
+    print!("{}", render(color));
+}
+
+/// Render the full system report into a String. `color` toggles ANSI styling
+/// (the GUI passes `false` for plain text).
+pub fn render(color: bool) -> String {
+    use std::fmt::Write as _;
+    let st = Style::with(color);
     let mut rows: Vec<(String, String)> = Vec::new();
 
     let user = collect::username();
@@ -107,17 +115,20 @@ pub fn run() {
 
     // ---- render ----
     let key_w = rows.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
-    println!();
-    println!("  {}", header);
-    println!("  {}", rule);
-    println!(
+    let mut out = String::new();
+    let _ = writeln!(out);
+    let _ = writeln!(out, "  {}", header);
+    let _ = writeln!(out, "  {}", rule);
+    let _ = writeln!(
+        out,
         "  {} {}",
         st.title("CRUCIBLE"),
         st.paint("2", "— crux info · deep system report")
     );
-    println!();
+    let _ = writeln!(out);
     for (k, v) in &rows {
-        println!("  {:<width$}  {}", st.key(k), v, width = key_w);
+        let _ = writeln!(out, "  {:<width$}  {}", st.key(k), v, width = key_w);
     }
-    println!();
+    let _ = writeln!(out);
+    out
 }

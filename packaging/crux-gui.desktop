@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=CRUCIBLE
+GenericName=System Benchmark
+Comment=Host-native CPU / memory / network / storage benchmark
+Exec=crux-gui
+Icon=crucible
+Terminal=false
+Categories=System;Utility;Monitor;
+Keywords=benchmark;cpu;memory;disk;network;sysinfo;crux;

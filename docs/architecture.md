@@ -1,37 +1,52 @@
 # Architecture
 
-CRUCIBLE is a single Rust crate (`crucible`) producing one binary (`crux`). The
-codebase is organised by responsibility, with the benchmark suites and the
-system-report renderer as separate module trees.
+CRUCIBLE is a Cargo **workspace**: a shared library crate (`crucible`) holds the
+benchmark/report engine, the CLI (`crux`) and the optional Qt GUI (`crux-gui`)
+are thin front-ends over it. A bare `cargo build` builds only the CLI
+(`default-members`); the GUI is built explicitly with `-p crucible-gui` and is
+the only part that needs Qt.
 
 ## Layout
 
 ```
 .
-├── Cargo.toml              # crate `crucible`, bin `crux`, deb/rpm metadata
+├── Cargo.toml              # workspace root + `crucible` lib + `crux` bin + deb/rpm metadata
 ├── Cargo.lock              # committed for reproducible packaging
-├── install.sh              # build-on-host installer (+ `sysinfo` symlink)
-├── src/
+├── install.sh              # build-on-host installer (CLI + `sysinfo` symlink)
+├── src/                    # the shared `crucible` library + `crux` CLI
+│   ├── lib.rs              # library root: re-exports modules + `run_named()` (used by the GUI)
 │   ├── main.rs             # `crux` CLI (clap): dispatch bench / info + upload
 │   ├── affinity.rs         # CPU pinning that does NOT leak into MT workers
 │   ├── stats.rs            # mean / median / stddev / percentile / geomean
 │   ├── sysinfo.rs          # lightweight SysInfo collector (bench result header)
 │   ├── upload.rs           # POST results to paste.rs
 │   ├── bench/
-│   │   ├── mod.rs          # orchestration: Config, Suite, FullResults, printers
+│   │   ├── mod.rs          # orchestration: Config, Suite, FullResults, format_results
 │   │   ├── cpu.rs          # BBP / SHA-256 / MatMul / LZ4 / Sort (ST + MT)
 │   │   ├── mem.rs          # STREAM Copy / Scale / Add / Triad
 │   │   ├── net.rs          # Cloudflare latency / download / upload
 │   │   └── disk.rs         # O_DIRECT seq + random I/O, tmpfs detection
 │   └── report/
-│       ├── mod.rs          # `crux info` renderer (assembles + prints rows)
+│       ├── mod.rs          # `crux info` renderer → render(color) -> String
 │       ├── collect.rs      # /proc, /sys, getifaddrs collectors
 │       └── format.rs       # Style/colour, human_bytes, bars, IPv6 compression
+├── gui/                    # the optional Qt 6 GUI crate (`crux-gui`)
+│   ├── Cargo.toml          # depends on `crucible` + cxx-qt
+│   ├── build.rs            # cxx-qt-build: QML module + Rust bridge
+│   ├── src/controller.rs   # `#[cxx_qt::bridge]` Controller QObject (threaded runs)
+│   ├── src/main.rs         # QGuiApplication + QQmlApplicationEngine
+│   └── qml/main.qml        # the UI
 ├── packaging/
 │   ├── aur/PKGBUILD        # Arch — builds from source on host
-│   └── deb/{postinst,prerm}# manage the `sysinfo` alias on deb installs
+│   ├── deb/{postinst,prerm}# manage the `sysinfo` alias on deb installs
+│   ├── gen-assets.sh       # generate man page + completions for deb/rpm
+│   └── crux-gui.desktop    # desktop entry for the GUI (used when packaging)
 └── docs/                   # this documentation
 ```
+
+Both front-ends call the same engine, so CLI and GUI always report identical
+numbers. The CLI prints via `bench::format_results` / `report::render`; the GUI
+shows the very same strings (with colour off) in its results pane.
 
 ## Module responsibilities
 

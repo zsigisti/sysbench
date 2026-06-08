@@ -14,6 +14,10 @@ impl Style {
             && std::env::var("TERM").map(|t| t != "dumb").unwrap_or(true);
         Style { on }
     }
+    /// Construct with an explicit colour setting (the GUI forces `false`).
+    pub fn with(on: bool) -> Self {
+        Style { on }
+    }
     pub fn paint(&self, code: &str, s: &str) -> String {
         if self.on {
             format!("\x1b[{}m{}\x1b[0m", code, s)
