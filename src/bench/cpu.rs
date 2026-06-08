@@ -99,26 +99,11 @@ fn bbp_hex_digit(n: u64) -> u8 {
     ((frac * 16.0) as u32 & 0xF) as u8
 }
 
-/// Pin current thread to a specific core if available.
-fn pin_to_core(idx: usize) {
-    if let Some(ids) = core_affinity::get_core_ids() {
-        if let Some(&id) = ids.get(idx) {
-            let _ = core_affinity::set_for_current(id);
-        }
-    }
-}
-
-fn pick_core(core_ids: &[core_affinity::CoreId], idx: usize) -> Option<core_affinity::CoreId> {
-    if core_ids.is_empty() {
-        None
-    } else {
-        core_ids.get(idx % core_ids.len()).copied()
-    }
-}
+use crate::affinity::{self, PinGuard};
 
 // ---------- BBP single ----------
 fn bbp_single_run(dur: Duration) -> f64 {
-    pin_to_core(0);
+    let _pin = PinGuard::pin(0); // restored to all-cores on drop — see affinity.rs
     let start = Instant::now();
     let mut n: u64 = 0;
     while start.elapsed() < dur {
@@ -135,16 +120,13 @@ fn bbp_single_run(dur: Duration) -> f64 {
 }
 
 fn bbp_multi_run(dur: Duration, threads: usize) -> f64 {
-    let core_ids = core_affinity::get_core_ids().unwrap_or_default();
+    affinity::reset_to_all_cores(); // clear any leaked ST pin before spawning
     let mut handles = Vec::with_capacity(threads);
     let start = Instant::now();
 
     for i in 0..threads {
-        let pin = pick_core(&core_ids, i);
         handles.push(thread::spawn(move || -> u64 {
-            if let Some(id) = pin {
-                let _ = core_affinity::set_for_current(id);
-            }
+            affinity::pin_worker(i);
             // Each thread does the same work as ST (starts at 0). bbp_hex_digit
             // is O(n), so threads MUST cover the same low-n range to measure raw
             // throughput — offsetting the start index would explode per-digit cost.
@@ -182,7 +164,7 @@ fn bbp_multi_run(dur: Duration, threads: usize) -> f64 {
 const SHA_BLOCK: usize = 1024 * 1024;
 
 fn sha_single_run(dur: Duration) -> f64 {
-    pin_to_core(0);
+    let _pin = PinGuard::pin(0);
     let buf = vec![0xA5u8; SHA_BLOCK];
     let start = Instant::now();
     let mut iters: u64 = 0;
@@ -201,15 +183,12 @@ fn sha_single_run(dur: Duration) -> f64 {
 }
 
 fn sha_multi_run(dur: Duration, threads: usize) -> f64 {
-    let core_ids = core_affinity::get_core_ids().unwrap_or_default();
+    affinity::reset_to_all_cores();
     let mut handles = Vec::with_capacity(threads);
     let start = Instant::now();
     for i in 0..threads {
-        let pin = pick_core(&core_ids, i);
         handles.push(thread::spawn(move || -> u64 {
-            if let Some(id) = pin {
-                let _ = core_affinity::set_for_current(id);
-            }
+            affinity::pin_worker(i);
             let buf = vec![0xA5u8; SHA_BLOCK];
             let t0 = Instant::now();
             let mut iters: u64 = 0;
@@ -256,7 +235,7 @@ fn matmul_once(a: &[f64], b: &[f64], c: &mut [f64]) {
 }
 
 fn matmul_single_run(dur: Duration) -> f64 {
-    pin_to_core(0);
+    let _pin = PinGuard::pin(0);
     let n = MATMUL_N;
     let a = vec![1.0001f64; n * n];
     let b = vec![0.9999f64; n * n];
@@ -276,14 +255,11 @@ fn matmul_single_run(dur: Duration) -> f64 {
 }
 
 fn matmul_multi_run(dur: Duration, threads: usize) -> f64 {
-    let core_ids = core_affinity::get_core_ids().unwrap_or_default();
+    affinity::reset_to_all_cores();
     let mut handles = Vec::with_capacity(threads);
     for i in 0..threads {
-        let pin = pick_core(&core_ids, i);
         handles.push(thread::spawn(move || -> f64 {
-            if let Some(id) = pin {
-                let _ = core_affinity::set_for_current(id);
-            }
+            affinity::pin_worker(i);
             let n = MATMUL_N;
             let a = vec![1.0001f64; n * n];
             let b = vec![0.9999f64; n * n];
@@ -325,7 +301,7 @@ fn make_lz4_buf() -> Vec<u8> {
 }
 
 fn lz4_single_run(dur: Duration) -> f64 {
-    pin_to_core(0);
+    let _pin = PinGuard::pin(0);
     let data = make_lz4_buf();
     let start = Instant::now();
     let mut iters: u64 = 0;
@@ -342,15 +318,12 @@ fn lz4_single_run(dur: Duration) -> f64 {
 }
 
 fn lz4_multi_run(dur: Duration, threads: usize) -> f64 {
-    let core_ids = core_affinity::get_core_ids().unwrap_or_default();
+    affinity::reset_to_all_cores();
     let mut handles = Vec::with_capacity(threads);
     let start = Instant::now();
     for i in 0..threads {
-        let pin = pick_core(&core_ids, i);
         handles.push(thread::spawn(move || -> u64 {
-            if let Some(id) = pin {
-                let _ = core_affinity::set_for_current(id);
-            }
+            affinity::pin_worker(i);
             let data = make_lz4_buf();
             let t0 = Instant::now();
             let mut iters: u64 = 0;
@@ -395,7 +368,7 @@ fn shuffle(buf: &mut [u64], seed: &mut u64) {
 }
 
 fn sort_single_run(dur: Duration) -> f64 {
-    pin_to_core(0);
+    let _pin = PinGuard::pin(0);
     let mut buf = vec![0u64; SORT_N];
     let mut seed: u64 = 0xDEADBEEFCAFEBABE;
     let start = Instant::now();
@@ -413,15 +386,12 @@ fn sort_single_run(dur: Duration) -> f64 {
 }
 
 fn sort_multi_run(dur: Duration, threads: usize) -> f64 {
-    let core_ids = core_affinity::get_core_ids().unwrap_or_default();
+    affinity::reset_to_all_cores();
     let mut handles = Vec::with_capacity(threads);
     let start = Instant::now();
     for i in 0..threads {
-        let pin = pick_core(&core_ids, i);
         handles.push(thread::spawn(move || -> u64 {
-            if let Some(id) = pin {
-                let _ = core_affinity::set_for_current(id);
-            }
+            affinity::pin_worker(i);
             let mut buf = vec![0u64; SORT_N];
             let mut seed: u64 = 0xDEADBEEFCAFEBABE ^ (i as u64).wrapping_mul(0x9E3779B97F4A7C15);
             if seed == 0 {

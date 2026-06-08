@@ -165,6 +165,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "core_affinity",
+ "libc",
+ "lz4_flex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "ureq",
+]
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -625,20 +639,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "tester"
-version = "0.3.0"
-dependencies = [
- "clap",
- "core_affinity",
- "libc",
- "lz4_flex",
- "serde",
- "serde_json",
- "sha2",
- "ureq",
 ]
 
 [[package]]

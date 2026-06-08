@@ -33,62 +33,58 @@ pub fn run() -> MemResults {
     let bytes_2n = 2.0 * N as f64 * 8.0;
     let bytes_3n = 3.0 * N as f64 * 8.0;
 
-    // black_box() barriers around each kernel prevent dead-store elimination:
-    // without them, a later kernel that overwrites an array makes the earlier
-    // kernel's stores dead and LLVM deletes the whole loop (giving fake TB/s).
+    // The kernels use iterator `zip` rather than `arr[i]` indexing on purpose:
+    // indexing three slices (Add/Triad) leaves bounds checks LLVM won't always
+    // hoist, which blocks auto-vectorisation and made Add/Triad run ~3x slower
+    // than Copy. `zip` is provably in-bounds, so the loops vectorise to SIMD.
+    //
+    // The post-loop `black_box(&out)` marks the written array as observed,
+    // defeating dead-store elimination — without it a later kernel that
+    // overwrites the same array makes the stores dead and LLVM deletes the loop
+    // entirely (yielding fake TB/s readings).
 
-    // Copy: b[i] = a[i]
+    // Copy: b = a
     let mut copy_runs = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
-        black_box(&a);
         let t0 = Instant::now();
-        for i in 0..N {
-            b[i] = a[i];
+        for (d, &s) in b.iter_mut().zip(a.iter()) {
+            *d = s;
         }
         black_box(&b);
-        let secs = t0.elapsed().as_secs_f64();
-        copy_runs.push(gbs(bytes_2n, secs));
+        copy_runs.push(gbs(bytes_2n, t0.elapsed().as_secs_f64()));
     }
 
-    // Scale: b[i] = scalar * c[i]
+    // Scale: b = scalar * c
     let mut scale_runs = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
-        black_box(&c);
         let t0 = Instant::now();
-        for i in 0..N {
-            b[i] = SCALAR * c[i];
+        for (d, &s) in b.iter_mut().zip(c.iter()) {
+            *d = SCALAR * s;
         }
         black_box(&b);
-        let secs = t0.elapsed().as_secs_f64();
-        scale_runs.push(gbs(bytes_2n, secs));
+        scale_runs.push(gbs(bytes_2n, t0.elapsed().as_secs_f64()));
     }
 
-    // Add: c[i] = a[i] + b[i]
+    // Add: c = a + b
     let mut add_runs = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
-        black_box(&a);
-        black_box(&b);
         let t0 = Instant::now();
-        for i in 0..N {
-            c[i] = a[i] + b[i];
+        for (d, (&x, &y)) in c.iter_mut().zip(a.iter().zip(b.iter())) {
+            *d = x + y;
         }
         black_box(&c);
-        let secs = t0.elapsed().as_secs_f64();
-        add_runs.push(gbs(bytes_3n, secs));
+        add_runs.push(gbs(bytes_3n, t0.elapsed().as_secs_f64()));
     }
 
-    // Triad: a[i] = b[i] + scalar * c[i]
+    // Triad: a = b + scalar * c
     let mut triad_runs = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
-        black_box(&b);
-        black_box(&c);
         let t0 = Instant::now();
-        for i in 0..N {
-            a[i] = b[i] + SCALAR * c[i];
+        for (d, (&x, &y)) in a.iter_mut().zip(b.iter().zip(c.iter())) {
+            *d = x + SCALAR * y;
         }
         black_box(&a);
-        let secs = t0.elapsed().as_secs_f64();
-        triad_runs.push(gbs(bytes_3n, secs));
+        triad_runs.push(gbs(bytes_3n, t0.elapsed().as_secs_f64()));
     }
 
     MemResults {

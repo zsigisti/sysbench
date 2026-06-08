@@ -1,106 +1,118 @@
-# sysbench
+<div align="center">
 
-A system benchmark and information toolkit written in Rust. Ships two binaries:
+# 🔥 CRUCIBLE
 
-- **`sysbench`** — benchmarks CPU, memory, network, and storage, prints a report, and uploads the results so you can share them.
-- **`sysinfo`** — a thorough system information display (think `fastfetch`, but deeper).
+**Trial by fire for your machine.**
+
+A host-native CPU / memory / network / storage benchmark **and** a deep
+system-info tool — one binary, `crux`, written in Rust with no runtime
+dependencies.
+
+`crux bench` · `crux info`
+
+</div>
+
+---
+
+CRUCIBLE compiles **natively on your machine** and puts it through a gauntlet:
+
+- **`crux bench`** — multi-threaded CPU suites, STREAM memory bandwidth, a
+  Cloudflare network test, and `O_DIRECT` storage I/O. Prints a report and
+  (by default) uploads a shareable copy.
+- **`crux info`** — a fast, thorough system report. Think `fastfetch`, but
+  deeper: full cache hierarchy, every mounted disk, thermals, batteries, and
+  per-interface IPv4/IPv6.
+
+The name is an acronym for what it measures:
+**C**ompute · **R**AM · **U**tilization · **C**ache · **I**/O · **B**andwidth ·
+**L**atency **E**valuation.
 
 ---
 
 ## Install
 
+### Quick (build-on-host script)
+
 ```sh
 curl -sSf https://raw.githubusercontent.com/zsigisti/sysbench/refs/heads/main/install.sh | bash
 ```
 
-Or, if you already have the repo cloned:
+This installs a C toolchain + Rust if missing, builds `crux` with
+`-C target-cpu=native`, installs it to `~/.local/bin` (or `/usr/local/bin` as
+root), and creates a `sysinfo` alias for `crux info`.
+
+### Packages (AUR / deb / rpm)
+
+CRUCIBLE is designed to be **built on the target host** so the benchmark
+reflects that machine. See **[docs/packaging.md](docs/packaging.md)** for the
+AUR `PKGBUILD`, `cargo deb`, and `cargo generate-rpm` workflows.
+
+### From source
 
 ```sh
-bash install.sh
+git clone https://github.com/zsigisti/sysbench
+cd sysbench
+RUSTFLAGS="-C target-cpu=native" cargo build --release
+./target/release/crux            # full benchmark
+./target/release/crux info       # system report
 ```
-
-The script will:
-
-- Install a C toolchain and Rust (via `rustup`) if they are missing
-- Build with native CPU optimisations (LTO, single codegen unit, `target-cpu=native`)
-- Install **both** `sysbench` and `sysinfo` to `~/.local/bin` (non-root) or `/usr/local/bin` (root)
 
 ---
 
-## `sysbench`
+## Usage
 
 ```sh
-sysbench                 # run everything (CPU, memory, network, storage)
-sysbench cpu             # CPU suite only
-sysbench mem             # memory bandwidth only
-sysbench net             # network only
-sysbench disk            # storage only
+crux                     # full benchmark (CPU + memory + network + storage)
+crux bench cpu           # one suite: cpu | mem | net | disk | all
+crux info                # deep system report (no benchmarking, no upload)
+sysinfo                  # alias for `crux info`
 ```
 
-By default the results are uploaded to [paste.rs](https://paste.rs) and a share URL is printed at the end.
+By default `crux bench` uploads results to [paste.rs](https://paste.rs) and
+prints a share URL. Disable with `--no-upload`.
 
 ### Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--json` | off | Emit machine-readable JSON instead of the human report |
+| `--json` | off | Machine-readable JSON instead of the human report |
 | `--duration <secs>` | `10` | Seconds per CPU test |
 | `--runs <n>` | `5` | Measured runs per CPU test (plus one warmup) |
 | `--streams <n>` | `4` | Parallel download streams for the network test |
+| `--dir <path>` | CWD | Scratch directory for the storage test |
 | `--no-upload` | off | Do **not** upload results (upload is on by default) |
 
-### What it measures
-
-**CPU** — five workloads, each run single-threaded and multi-threaded with warmup and median ± stddev:
-
-- **BBP-π** — hex digits of π via the Bailey–Borwein–Plouffe formula (integer-heavy)
-- **SHA-256** — hashing 1 MiB blocks (MB/s)
-- **MatMul** — 256×256 `f64` matrix multiply (GFLOPS)
-- **LZ4** — compressing a 1 MiB semi-compressible buffer (MB/s)
-- **Sort** — `sort_unstable` over 1M `u64` (M items/s)
-
-A geometric-mean **composite score** and the MT/ST **speedup** are reported. Threads are pinned to distinct cores.
-
-**Memory** — STREAM-style Copy / Scale / Add / Triad over 256 MiB arrays, GB/s. `black_box` barriers prevent the optimiser from deleting the kernels.
-
-**Network** — Cloudflare speed-test endpoints: latency (min/avg/max/stddev/jitter), parallel download, and upload.
-
-**Storage** — sequential write + read and random 4K read/write latency (p50/p99). On Linux it uses `O_DIRECT` to bypass the page cache. The test file is sized to fit available free space and is skipped cleanly if the disk is too full.
+Full reference: **[docs/cli.md](docs/cli.md)**.
 
 ---
 
-## `sysinfo`
+## What it measures
 
-```sh
-sysinfo
-```
+| Suite | Tests | Units |
+|-------|-------|-------|
+| **CPU** | BBP-π · SHA-256 · MatMul · LZ4 · Sort, single- **and** multi-threaded | digits/s, MB/s, GFLOPS, M items/s + composite score & speedup |
+| **Memory** | STREAM Copy / Scale / Add / Triad | GB/s |
+| **Network** | Cloudflare latency (min/avg/max/stddev/jitter), download, upload | ms, Mbps |
+| **Storage** | sequential write/read, random 4K read/write latency, `O_DIRECT` | MB/s, µs (p50/p99) |
 
-Prints a single thorough report covering:
-
-- OS, host, kernel + architecture, uptime, package counts, shell
-- CPU model, physical/logical core counts, current/max frequency, full cache hierarchy
-- Load average
-- GPU(s) (via `lspci`, falling back to the DRM driver)
-- Memory and swap usage with bars
-- Every real mounted filesystem with usage bars
-- Thermal sensors and battery state
-- Network interfaces with MAC and IPv4/IPv6 addresses
-
-Honours `NO_COLOR`.
+The exact algorithms, why they're correct, and the subtle bugs that were fixed
+(MT core-affinity inheritance, tmpfs masquerading as disk, vectorisation of the
+STREAM kernels) are documented in **[docs/methodology.md](docs/methodology.md)**.
 
 ---
 
-## Build manually
+## Documentation
 
-```sh
-cd tester
-RUSTFLAGS="-C target-cpu=native" cargo build --release
-./target/release/sysbench
-./target/release/sysinfo
-```
+| Doc | Contents |
+|-----|----------|
+| [docs/cli.md](docs/cli.md) | Every command, subcommand, and flag |
+| [docs/methodology.md](docs/methodology.md) | How each benchmark works and why the numbers are trustworthy |
+| [docs/sysinfo.md](docs/sysinfo.md) | Everything `crux info` reports and where it reads it from |
+| [docs/architecture.md](docs/architecture.md) | Codebase layout and module responsibilities |
+| [docs/packaging.md](docs/packaging.md) | AUR / deb / rpm packaging, host-native build model |
 
 ---
 
 ## License
 
-GPL-3.0
+GPL-3.0-or-later — see [LICENSE](LICENSE).

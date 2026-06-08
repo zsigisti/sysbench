@@ -1,2 +1,4 @@
 /target
-Cargo.lock
+
+# Cargo.lock IS committed: this is a binary/application and packagers
+# (AUR/deb/rpm) build with --locked/--frozen for reproducibility.

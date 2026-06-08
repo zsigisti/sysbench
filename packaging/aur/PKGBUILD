@@ -1,0 +1,48 @@
+# Maintainer: Murka-Moncz Zsigmond <sanyikapenz@gmail.com>
+#
+# CRUCIBLE — host-native benchmark + deep system-info tool.
+#
+# AUR builds from source via makepkg ON THE USER'S MACHINE, so the resulting
+# `crux` binary is already native to this host. We additionally compile with
+# `-C target-cpu=native` so the CPU/memory kernels use every instruction the
+# build host supports — exactly what you want for an honest local benchmark.
+#
+# NOTE: a native binary is NOT portable. Do not copy this package to a machine
+# with a different/older CPU — it may fault with SIGILL. Rebuild there instead.
+
+pkgname=crucible
+pkgver=0.4.0
+pkgrel=1
+pkgdesc="Host-native CPU/memory/network/storage benchmark and deep system-info tool (crux)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/zsigisti/sysbench"
+license=('GPL-3.0-or-later')
+makedepends=('cargo')
+optdepends=('pciutils: GPU detection in `crux info`')
+provides=('crux')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')  # replace SKIP with the real checksum when cutting a release
+
+prepare() {
+    cd "$srcdir/$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    # Host-native codegen for an honest benchmark.
+    RUSTFLAGS="${RUSTFLAGS} -C target-cpu=native" \
+        cargo build --frozen --release --bin crux
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+    install -Dm755 "target/release/crux" "$pkgdir/usr/bin/crux"
+    # `sysinfo` alias → `crux info`
+    ln -s crux "$pkgdir/usr/bin/sysinfo"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

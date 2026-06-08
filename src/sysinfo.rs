@@ -24,13 +24,9 @@ impl SysInfo {
         }
     }
 
-    pub fn ram_bytes(&self) -> u64 {
-        self.ram_mib * 1024 * 1024
-    }
-
     pub fn print(&self) {
         println!("===================================================");
-        println!("  sysbench v0.2 — System Benchmark");
+        println!("  CRUCIBLE — crux benchmark  (trial by fire)");
         println!("===================================================");
         println!("CPU    : {}", self.cpu_model);
         println!("Cores  : {}", self.logical_cores);
@@ -68,7 +64,6 @@ fn read_mem_total_mib() -> u64 {
         for line in s.lines() {
             if let Some(rest) = line.strip_prefix("MemTotal:") {
                 let kib: u64 = rest
-                    .trim()
                     .split_whitespace()
                     .next()
                     .and_then(|v| v.parse().ok())

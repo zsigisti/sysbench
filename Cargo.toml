@@ -1,0 +1,75 @@
+[package]
+name = "crucible"
+version = "0.4.0"
+edition = "2021"
+description = "CRUCIBLE — a host-native CPU / memory / network / storage benchmark and deep system-info tool."
+authors = ["Murka-Moncz Zsigmond"]
+license = "GPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/zsigisti/sysbench"
+keywords = ["benchmark", "sysinfo", "stream", "cpu", "storage"]
+categories = ["command-line-utilities", "hardware-support"]
+autobins = false
+
+# Single unified binary: `crux bench` and `crux info`.
+[[bin]]
+name = "crux"
+path = "src/main.rs"
+
+[dependencies]
+ureq = "2.10"
+sha2 = "0.10"
+lz4_flex = "0.11"
+core_affinity = "0.8"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# ============================================================
+# Packaging metadata
+# ============================================================
+# A `sysinfo` alias (symlink to `crux`) is created by the packagers/installer
+# so `sysinfo` behaves like `crux info`.
+
+# ---- cargo-deb (https://github.com/kornelski/cargo-deb) ----
+#   cargo install cargo-deb && cargo deb
+[package.metadata.deb]
+maintainer = "Murka-Moncz Zsigmond <sanyikapenz@gmail.com>"
+copyright = "2026, Murka-Moncz Zsigmond"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+CRUCIBLE puts a machine through trial by fire: multi-threaded CPU suites \
+(BBP-pi, SHA-256, MatMul, LZ4, sort), a STREAM memory-bandwidth test, a \
+Cloudflare network test, and O_DIRECT storage I/O - plus `crux info`, a \
+fastfetch-style but deeper system report. Built natively on the host."""
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/crux", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/crucible/README.md", "644"],
+]
+# Post-install / pre-remove hooks manage the `sysinfo` alias.
+maintainer-scripts = "packaging/deb/"
+
+# ---- cargo-generate-rpm (https://github.com/cat-in-136/cargo-generate-rpm) ----
+#   cargo install cargo-generate-rpm && cargo build --release && cargo generate-rpm
+[package.metadata.generate-rpm]
+summary = "Host-native CPU/memory/network/storage benchmark and deep system-info tool"
+license = "GPL-3.0-or-later"
+assets = [
+    { source = "target/release/crux", dest = "/usr/bin/crux", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/crucible/README.md", mode = "644", doc = true },
+    { source = "LICENSE", dest = "/usr/share/doc/crucible/LICENSE", mode = "644", doc = true },
+]
+post_install_script = "ln -sf /usr/bin/crux /usr/bin/sysinfo || true"
+post_uninstall_script = "rm -f /usr/bin/sysinfo || true"

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BINARIES=(sysbench sysinfo)
+# CRUCIBLE installer — builds the `crux` binary natively on THIS host and
+# installs it, plus a `sysinfo` alias (-> `crux info`).
+
+BIN="crux"
+ALIAS="sysinfo"
 INSTALL_DIR="/usr/local/bin"
 
 # ── colours ────────────────────────────────────────────────────────────────
@@ -12,7 +16,6 @@ die()   { echo -e "${RED}error:${NC} $*" >&2; exit 1; }
 
 # ── ensure C toolchain is available ───────────────────────────────────────
 ensure_cc() {
-    # Try to actually compile something — presence in PATH is not enough
     if echo 'int main(){}' | cc -x c - -o /tmp/_cc_test 2>/dev/null; then
         rm -f /tmp/_cc_test
         return
@@ -43,21 +46,16 @@ ensure_rust() {
         info "Rust $(rustc --version) found."
         return
     fi
-
     warn "Rust not found."
-    # Read from /dev/tty so curl-pipe-bash doesn't consume the script stream
     read -r -p "Install Rust via rustup now? [Y/n] " answer </dev/tty || true
     case "${answer,,}" in
         n|no) die "Rust is required. Install from https://rustup.rs and re-run." ;;
     esac
-
     info "Installing Rust via rustup..."
     command -v curl >/dev/null 2>&1 || die "curl is required to install rustup."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
-
     # shellcheck source=/dev/null
     source "$HOME/.cargo/env"
-
     command -v cargo >/dev/null 2>&1 || die "rustup install finished but cargo still not found."
     info "Rust installed: $(rustc --version)"
 }
@@ -72,7 +70,7 @@ CRATE_DIR=""
 _self="${BASH_SOURCE[0]:-}"
 if [ -n "$_self" ]; then
     SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
-    CRATE_DIR="$SCRIPT_DIR/tester"
+    CRATE_DIR="$SCRIPT_DIR"
 fi
 
 if [ ! -f "${CRATE_DIR}/Cargo.toml" ]; then
@@ -80,21 +78,19 @@ if [ ! -f "${CRATE_DIR}/Cargo.toml" ]; then
     CLONED_DIR="$(mktemp -d)"
     info "Cloning repository into $CLONED_DIR ..."
     git clone --depth 1 https://github.com/zsigisti/sysbench.git "$CLONED_DIR"
-    CRATE_DIR="$CLONED_DIR/tester"
+    CRATE_DIR="$CLONED_DIR"
 fi
 
 cleanup() { [ -n "$CLONED_DIR" ] && rm -rf "$CLONED_DIR"; }
 trap cleanup EXIT
 
-# ── build ──────────────────────────────────────────────────────────────────
-info "Building ${BINARIES[*]} (release + native CPU optimisations)..."
+# ── build (native CPU — honest local benchmark, NOT portable) ──────────────
+info "Building $BIN (release + -C target-cpu=native on this host)..."
 RUSTFLAGS="-C target-cpu=native" \
-    cargo build --release --manifest-path "$CRATE_DIR/Cargo.toml"
+    cargo build --release --bin "$BIN" --manifest-path "$CRATE_DIR/Cargo.toml"
 
-for b in "${BINARIES[@]}"; do
-    [ -f "$CRATE_DIR/target/release/$b" ] \
-        || die "Build succeeded but binary not found at $CRATE_DIR/target/release/$b"
-done
+BIN_PATH="$CRATE_DIR/target/release/$BIN"
+[ -f "$BIN_PATH" ] || die "Build succeeded but binary not found at $BIN_PATH"
 
 # ── install ────────────────────────────────────────────────────────────────
 # Prefer ~/.local/bin when not root (no sudo needed)
@@ -106,10 +102,11 @@ if [ "$EUID" -ne 0 ] && [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
     warn "Make sure $INSTALL_DIR is in your PATH."
 fi
 
-for b in "${BINARIES[@]}"; do
-    info "Installing $b -> $INSTALL_DIR/$b"
-    install -m 755 "$CRATE_DIR/target/release/$b" "$INSTALL_DIR/$b"
-done
+info "Installing $BIN -> $INSTALL_DIR/$BIN"
+install -m 755 "$BIN_PATH" "$INSTALL_DIR/$BIN"
+
+info "Linking $ALIAS -> $BIN (so '$ALIAS' runs 'crux info')"
+ln -sf "$BIN" "$INSTALL_DIR/$ALIAS"
 
 # ── PATH hint ──────────────────────────────────────────────────────────────
 if ! echo ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
@@ -118,4 +115,6 @@ if ! echo ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
     warn "  export PATH=\"$INSTALL_DIR:\$PATH\""
 fi
 
-info "Done. Run: ${BINARIES[0]}  (or: ${BINARIES[1]})"
+info "Done. Run: $BIN            (full benchmark)"
+info "         $BIN info       (deep system report)"
+info "         $ALIAS           (alias for '$BIN info')"

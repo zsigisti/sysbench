@@ -1,0 +1,7 @@
+#!/bin/sh
+# Create the `sysinfo` alias -> `crux info` after install.
+set -e
+if [ "$1" = "configure" ]; then
+    ln -sf /usr/bin/crux /usr/bin/sysinfo || true
+fi
+exit 0

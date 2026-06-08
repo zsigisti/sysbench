@@ -13,6 +13,8 @@ use crate::stats;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DiskResults {
+    pub dir: String,
+    pub on_tmpfs: bool,
     pub file_size_mib: u64,
     pub seq_write_mbs: f64,
     pub seq_read_mbs: f64,
@@ -51,6 +53,41 @@ fn available_bytes(_dir: &Path) -> Option<u64> {
     None
 }
 
+/// True if `dir` lives on a RAM-backed filesystem (tmpfs/ramfs). O_DIRECT is a
+/// no-op there, so the "disk" numbers would actually be memory speed — we detect
+/// this and flag it loudly rather than reporting fake 16 GB/s / 1 µs results.
+#[cfg(target_os = "linux")]
+fn is_tmpfs(dir: &Path) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    const TMPFS_MAGIC: i64 = 0x0102_1994;
+    const RAMFS_MAGIC: i64 = 0x8584_58f6u32 as i64;
+    let Ok(c) = CString::new(dir.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mut s: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(c.as_ptr(), &mut s) } != 0 {
+        return false;
+    }
+    let t = s.f_type as i64;
+    t == TMPFS_MAGIC || t == RAMFS_MAGIC
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_tmpfs(_dir: &Path) -> bool {
+    false
+}
+
+/// Pick the scratch directory: an explicit `--dir`, else the current working
+/// directory (almost always real disk), falling back to the temp dir. We avoid
+/// silently defaulting to /tmp, which is tmpfs on most modern systemd distros.
+fn choose_scratch_dir(requested: Option<PathBuf>) -> PathBuf {
+    if let Some(d) = requested {
+        return d;
+    }
+    std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir())
+}
+
 /// Clamp the target file size so the benchmark never tries to fill the disk.
 /// Uses at most half of the free space and leaves headroom; errors if the
 /// filesystem can't host a meaningful test.
@@ -63,14 +100,11 @@ fn fit_to_space(dir: &Path, target: u64) -> std::io::Result<u64> {
     size = (size / CHUNK as u64) * CHUNK as u64; // align to CHUNK
     if size < MIN_FILE {
         let avail_mib = available_bytes(dir).unwrap_or(0) / (1024 * 1024);
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "not enough free space in {} ({} MiB available, need ~512 MiB) — skipping disk test",
-                dir.display(),
-                avail_mib
-            ),
-        ));
+        return Err(std::io::Error::other(format!(
+            "not enough free space in {} ({} MiB available, need ~512 MiB) — skipping disk test",
+            dir.display(),
+            avail_mib
+        )));
     }
     Ok(size)
 }
@@ -158,6 +192,7 @@ mod linux_io {
             })
         }
 
+        #[allow(dead_code)]
         pub fn as_slice(&self) -> &[u8] {
             unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
         }
@@ -354,13 +389,14 @@ fn rand_write(path: &Path, file_size: u64) -> std::io::Result<(f64, f64)> {
 // Public runner
 // ============================================================
 
-pub fn run(ram_mib: u64) -> std::io::Result<DiskResults> {
-    let dir: PathBuf = std::env::temp_dir();
+pub fn run(ram_mib: u64, dir: Option<PathBuf>) -> std::io::Result<DiskResults> {
+    let dir = choose_scratch_dir(dir);
+    let on_tmpfs = is_tmpfs(&dir);
     let file_size = fit_to_space(&dir, choose_file_size(ram_mib))?;
     let file_size_mib = file_size / (1024 * 1024);
 
-    let mut path: PathBuf = dir;
-    path.push("sysbench_scratch.bin");
+    let mut path: PathBuf = dir.clone();
+    path.push(".crux_scratch.bin");
     let _guard = TempPath(path.clone());
 
     let seq_write_mbs = seq_write(&path, file_size)?;
@@ -369,6 +405,8 @@ pub fn run(ram_mib: u64) -> std::io::Result<DiskResults> {
     let (rand_write_p50_us, rand_write_p99_us) = rand_write(&path, file_size)?;
 
     Ok(DiskResults {
+        dir: dir.display().to_string(),
+        on_tmpfs,
         file_size_mib,
         seq_write_mbs,
         seq_read_mbs,
