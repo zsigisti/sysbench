@@ -34,7 +34,7 @@ The name is an acronym for what it measures:
 ### Quick (build-on-host script)
 
 ```sh
-curl -sSf https://raw.githubusercontent.com/zsigisti/sysbench/refs/heads/main/install.sh | bash
+curl -sSf https://raw.githubusercontent.com/zsigisti/crucible/refs/heads/main/install.sh | bash
 ```
 
 This installs a C toolchain + Rust if missing, builds `crux` with
@@ -50,8 +50,8 @@ AUR `PKGBUILD`, `cargo deb`, and `cargo generate-rpm` workflows.
 ### From source
 
 ```sh
-git clone https://github.com/zsigisti/sysbench
-cd sysbench
+git clone https://github.com/zsigisti/crucible
+cd crucible
 RUSTFLAGS="-C target-cpu=native" cargo build --release
 ./target/release/crux            # full benchmark
 ./target/release/crux info       # system report

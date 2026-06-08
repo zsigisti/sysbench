@@ -77,7 +77,7 @@ if [ ! -f "${CRATE_DIR}/Cargo.toml" ]; then
     command -v git >/dev/null 2>&1 || die "git is required. Install git and re-run."
     CLONED_DIR="$(mktemp -d)"
     info "Cloning repository into $CLONED_DIR ..."
-    git clone --depth 1 https://github.com/zsigisti/sysbench.git "$CLONED_DIR"
+    git clone --depth 1 https://github.com/zsigisti/crucible.git "$CLONED_DIR"
     CRATE_DIR="$CLONED_DIR"
 fi
 
