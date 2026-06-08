@@ -7,12 +7,16 @@ produced by identical measurement code.
 The CLI (`crux`) remains fully standalone — the GUI is an **optional** extra in
 its own crate and is never required to use CRUCIBLE.
 
-## Build & run
+## Install & run
 
 Requires Qt 6 (Quick/QML) and a C++ toolchain at build time.
 
 ```sh
-# from the repo root
+# install via the script (builds + adds an app-menu entry + icon)
+./install.sh --gui          # or: ./install.sh --all  (CLI + GUI)
+crux-gui
+
+# …or build directly from a clone
 cargo build -p crucible-gui --release
 ./target/release/crux-gui
 ```

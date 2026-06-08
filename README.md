@@ -38,13 +38,24 @@ The name is an acronym for what it measures:
 
 ### Quick (build-on-host script)
 
+The CLI and GUI install **independently** — install either, or both:
+
 ```sh
+# CLI only (crux + sysinfo alias) — the default
 curl -sSf https://raw.githubusercontent.com/zsigisti/crucible/refs/heads/main/install.sh | bash
+
+# GUI only (crux-gui + app-menu entry) — needs Qt 6
+curl -sSf https://raw.githubusercontent.com/zsigisti/crucible/refs/heads/main/install.sh | bash -s -- --gui
+
+# both
+curl -sSf https://raw.githubusercontent.com/zsigisti/crucible/refs/heads/main/install.sh | bash -s -- --all
 ```
 
-This installs a C toolchain + Rust if missing, builds `crux` with
-`-C target-cpu=native`, installs it to `~/.local/bin` (or `/usr/local/bin` as
-root), and creates a `sysinfo` alias for `crux info`.
+The script installs a C toolchain + Rust (and Qt 6 for `--gui`) if missing,
+builds with `-C target-cpu=native`, and installs to `~/.local/bin` (or
+`/usr/local/bin` as root). The CLI install also adds the `sysinfo` alias, the
+`man crux` page, and shell completions; the GUI install also adds a desktop
+entry + icon. From a local clone: `./install.sh [--gui|--all]`.
 
 ### Packages (AUR / deb / rpm)
 
@@ -91,8 +102,9 @@ Full reference: **[docs/cli.md](docs/cli.md)**.
 
 ### GUI (optional)
 
-A Qt 6 desktop front-end lives in [`gui/`](gui/README.md) as a separate crate.
-The CLI never depends on it; build it only if you want it:
+A Qt 6 desktop front-end lives in [`gui/`](gui/README.md) as a separate crate;
+the CLI never depends on it. Install it with `install.sh --gui` (above), or
+build it directly:
 
 ```sh
 cargo build -p crucible-gui --release   # needs Qt 6 (qt6-base, qt6-declarative)
