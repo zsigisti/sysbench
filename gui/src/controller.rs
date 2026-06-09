@@ -1,6 +1,10 @@
 // The QObject the QML talks to. Holds UI state and drives the shared `crucible`
 // engine on background threads, marshalling everything back onto the Qt event
 // loop via `qt_thread().queue(...)`.
+//
+// Exposes: benchmark runs (with live streaming for the full suite), sharing
+// (server + paste.rs fallback) and submit (server only), file export, local run
+// history + comparison/analysis, system facts, a theme flag, and self-uninstall.
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -16,20 +20,53 @@ pub mod qobject {
         #[qproperty(bool, running)]
         #[qproperty(QString, output)]
         #[qproperty(QString, share_url)]
+        #[qproperty(QString, backend)]
+        #[qproperty(bool, dark)]
+        #[qproperty(bool, has_results)]
+        #[qproperty(QString, sys_facts)]
+        #[qproperty(QString, history)]
+        #[qproperty(QString, analysis)]
+        #[qproperty(QString, compare_text)]
+        // The JSON of the last completed run; kept as a property so it survives
+        // across the bridge for export/share/submit. Not shown in the UI.
+        #[qproperty(QString, last_json)]
         type Controller = super::ControllerRust;
 
         /// Run a suite: "all" | "cpu" | "mem" | "net" | "disk" | "info".
-        /// For benchmark suites, `duration`/`runs` come from the UI settings.
         #[qinvokable]
         fn run(self: Pin<&mut Controller>, kind: QString, duration: i32, runs: i32);
 
-        /// Upload the current output to paste.rs and expose the URL.
+        /// Share results: CRUCIBLE server first, paste.rs fallback.
         #[qinvokable]
         fn share(self: Pin<&mut Controller>);
+
+        /// Submit results to the CRUCIBLE score server (no fallback).
+        #[qinvokable]
+        fn submit(self: Pin<&mut Controller>);
 
         /// Clear the output pane and any share URL.
         #[qinvokable]
         fn clear(self: Pin<&mut Controller>);
+
+        /// Write the current report text to `path` (a plain path or file:// URL).
+        #[qinvokable]
+        fn export_report(self: Pin<&mut Controller>, path: QString);
+
+        /// Write the current results JSON to `path`.
+        #[qinvokable]
+        fn export_json(self: Pin<&mut Controller>, path: QString);
+
+        /// Reload `history` + `analysis` from disk.
+        #[qinvokable]
+        fn refresh_history(self: Pin<&mut Controller>);
+
+        /// Compare two recorded runs by id; result goes to `compare_text`.
+        #[qinvokable]
+        fn compare_runs(self: Pin<&mut Controller>, a: QString, b: QString);
+
+        /// Remove installed files. `purge` also deletes local history.
+        #[qinvokable]
+        fn uninstall(self: Pin<&mut Controller>, purge: bool);
     }
 
     impl cxx_qt::Threading for Controller {}
@@ -44,15 +81,32 @@ pub struct ControllerRust {
     running: bool,
     output: QString,
     share_url: QString,
+    backend: QString,
+    dark: bool,
+    has_results: bool,
+    sys_facts: QString,
+    history: QString,
+    analysis: QString,
+    compare_text: QString,
+    last_json: QString,
 }
 
 impl Default for ControllerRust {
     fn default() -> Self {
+        let (hist, analysis) = history_payload();
         Self {
             status: QString::from("Ready."),
             running: false,
             output: QString::from(""),
             share_url: QString::from(""),
+            backend: QString::from(""),
+            dark: true,
+            has_results: false,
+            sys_facts: QString::from(sys_facts_json().as_str()),
+            history: QString::from(hist.as_str()),
+            analysis: QString::from(analysis.as_str()),
+            compare_text: QString::from(""),
+            last_json: QString::from(""),
         }
     }
 }
@@ -71,10 +125,26 @@ impl qobject::Controller {
 
         self.as_mut().set_running(true);
         self.as_mut().set_share_url(QString::from(""));
+        self.as_mut().set_backend(QString::from(""));
         self.as_mut().set_output(QString::from(""));
 
-        // For "all", run each suite in turn and stream its output in as it
-        // finishes (nicer than one long opaque wait). Otherwise run the one.
+        // "info" is not a benchmark — just render the report, no JSON/history.
+        if kind == "info" {
+            let qt = self.qt_thread();
+            std::thread::spawn(move || {
+                let text = crucible::report::render(false);
+                let _ = qt.queue(move |mut o: Pin<&mut qobject::Controller>| {
+                    o.as_mut().set_output(QString::from(text.as_str()));
+                    o.as_mut().set_status(QString::from("System info."));
+                    o.as_mut().set_has_results(false);
+                    o.as_mut().set_running(false);
+                });
+            });
+            return;
+        }
+
+        // For "all", stream each suite as it finishes and merge the structured
+        // results into one record; otherwise run the single suite.
         let suites: Vec<String> = match kind.as_str() {
             "all" => ["cpu", "mem", "net", "disk"].iter().map(|s| s.to_string()).collect(),
             other => vec![other.to_string()],
@@ -82,15 +152,18 @@ impl qobject::Controller {
 
         let qt = self.qt_thread();
         std::thread::spawn(move || {
+            let mut parts = Vec::new();
             for kind in &suites {
-                let kind = kind.as_str();
                 let label = suite_label(kind);
                 let q = qt.clone();
                 let _ = q.queue(move |mut o: Pin<&mut qobject::Controller>| {
-                    o.as_mut().set_status(QString::from(format!("Running {} …", label).as_str()));
+                    o.as_mut()
+                        .set_status(QString::from(format!("Running {} …", label).as_str()));
                 });
 
-                let text = crucible::run_suite_text(kind, &opts);
+                let out = crucible::run_suite_collect(kind, &opts);
+                let text = out.text;
+                parts.push(out.results);
 
                 let q = qt.clone();
                 let _ = q.queue(move |mut o: Pin<&mut qobject::Controller>| {
@@ -99,36 +172,94 @@ impl qobject::Controller {
                     o.as_mut().set_output(QString::from(cur.as_str()));
                 });
             }
-            let _ = qt.queue(|mut o: Pin<&mut qobject::Controller>| {
-                o.as_mut().set_status(QString::from("Done."));
+
+            // Merge + record to history.
+            let merged = crucible::bench::merge(parts);
+            let json = merged
+                .as_ref()
+                .and_then(|m| crucible::bench::to_json(m).ok())
+                .unwrap_or_default();
+            let recorded = if json.is_empty() {
+                Err("no results".to_string())
+            } else {
+                crucible::history::record(&json).map(|e| e.id)
+            };
+            let (hist, analysis) = history_payload();
+
+            let has = !json.is_empty();
+            let _ = qt.queue(move |mut o: Pin<&mut qobject::Controller>| {
+                o.as_mut().set_last_json(QString::from(json.as_str()));
+                o.as_mut().set_has_results(has);
+                o.as_mut().set_history(QString::from(hist.as_str()));
+                o.as_mut().set_analysis(QString::from(analysis.as_str()));
+                let msg = match recorded {
+                    Ok(id) => format!("Done — recorded {}.", id),
+                    Err(e) => format!("Done (history not saved: {}).", e),
+                };
+                o.as_mut().set_status(QString::from(msg.as_str()));
                 o.as_mut().set_running(false);
             });
         });
     }
 
     pub fn share(mut self: Pin<&mut Self>) {
+        let body = self.share_body();
+        let Some(body) = body else {
+            self.as_mut()
+                .set_status(QString::from("Nothing to share yet — run a benchmark first."));
+            return;
+        };
         if *self.running() {
             return;
         }
-        let body = self.output().to_string();
-        if body.trim().is_empty() {
-            self.as_mut().set_status(QString::from("Nothing to share yet — run a benchmark first."));
-            return;
-        }
         self.as_mut().set_running(true);
-        self.as_mut().set_status(QString::from("Uploading to paste.rs …"));
+        self.as_mut().set_status(QString::from("Sharing …"));
 
         let qt = self.qt_thread();
         std::thread::spawn(move || {
-            let result = crucible::upload::upload(&body);
+            let result = crucible::upload::share(&body);
+            let _ = qt.queue(move |mut o: Pin<&mut qobject::Controller>| {
+                match result {
+                    Ok(s) => {
+                        o.as_mut().set_share_url(QString::from(s.url.as_str()));
+                        o.as_mut().set_backend(QString::from(s.backend));
+                        o.as_mut()
+                            .set_status(QString::from(format!("Shared via {}.", s.backend).as_str()));
+                    }
+                    Err(e) => {
+                        o.as_mut().set_status(QString::from(format!("Share failed: {}", e).as_str()));
+                    }
+                }
+                o.as_mut().set_running(false);
+            });
+        });
+    }
+
+    pub fn submit(mut self: Pin<&mut Self>) {
+        let Some(body) = self.share_body() else {
+            self.as_mut()
+                .set_status(QString::from("Nothing to submit yet — run a benchmark first."));
+            return;
+        };
+        if *self.running() {
+            return;
+        }
+        self.as_mut().set_running(true);
+        self.as_mut()
+            .set_status(QString::from(format!("Submitting to {} …", crucible::upload::server_base()).as_str()));
+
+        let qt = self.qt_thread();
+        std::thread::spawn(move || {
+            let result = crucible::upload::submit(&body);
             let _ = qt.queue(move |mut o: Pin<&mut qobject::Controller>| {
                 match result {
                     Ok(url) => {
                         o.as_mut().set_share_url(QString::from(url.as_str()));
-                        o.as_mut().set_status(QString::from("Shared."));
+                        o.as_mut().set_backend(QString::from("crux"));
+                        o.as_mut().set_status(QString::from("Submitted to the score server."));
                     }
                     Err(e) => {
-                        o.as_mut().set_status(QString::from(format!("Upload failed: {}", e).as_str()));
+                        o.as_mut().set_status(QString::from(format!("Submit failed: {}", e).as_str()));
                     }
                 }
                 o.as_mut().set_running(false);
@@ -142,7 +273,87 @@ impl qobject::Controller {
         }
         self.as_mut().set_output(QString::from(""));
         self.as_mut().set_share_url(QString::from(""));
+        self.as_mut().set_backend(QString::from(""));
+        self.as_mut().set_has_results(false);
+        self.as_mut().set_last_json(QString::from(""));
         self.as_mut().set_status(QString::from("Ready."));
+    }
+
+    pub fn export_report(mut self: Pin<&mut Self>, path: QString) {
+        let p = strip_file_url(&path.to_string());
+        let body = self.output().to_string();
+        self.as_mut().set_status(QString::from(match std::fs::write(&p, body) {
+            Ok(()) => format!("Saved report to {}", p),
+            Err(e) => format!("Save failed: {}", e),
+        }.as_str()));
+    }
+
+    pub fn export_json(mut self: Pin<&mut Self>, path: QString) {
+        let p = strip_file_url(&path.to_string());
+        let body = self.last_json().to_string();
+        if body.is_empty() {
+            self.as_mut().set_status(QString::from("No JSON to export — run a benchmark first."));
+            return;
+        }
+        self.as_mut().set_status(QString::from(match std::fs::write(&p, body) {
+            Ok(()) => format!("Saved JSON to {}", p),
+            Err(e) => format!("Save failed: {}", e),
+        }.as_str()));
+    }
+
+    pub fn refresh_history(mut self: Pin<&mut Self>) {
+        let (hist, analysis) = history_payload();
+        self.as_mut().set_history(QString::from(hist.as_str()));
+        self.as_mut().set_analysis(QString::from(analysis.as_str()));
+    }
+
+    pub fn compare_runs(mut self: Pin<&mut Self>, a: QString, b: QString) {
+        let (a, b) = (a.to_string(), b.to_string());
+        if a.is_empty() || b.is_empty() || a == b {
+            self.as_mut()
+                .set_compare_text(QString::from("Pick two different runs to compare."));
+            return;
+        }
+        let text = match (crucible::history::load(&a), crucible::history::load(&b)) {
+            (Ok(ja), Ok(jb)) => crucible::compare::render_json(&ja, &jb, false)
+                .unwrap_or_else(|e| format!("Compare failed: {}", e)),
+            _ => "Could not load one of the runs.".to_string(),
+        };
+        self.as_mut().set_compare_text(QString::from(text.as_str()));
+    }
+
+    pub fn uninstall(mut self: Pin<&mut Self>, purge: bool) {
+        if *self.running() {
+            return;
+        }
+        self.as_mut().set_running(true);
+        self.as_mut().set_status(QString::from("Uninstalling …"));
+        let qt = self.qt_thread();
+        std::thread::spawn(move || {
+            let report = crucible::uninstall::run(purge);
+            let msg = report.summary();
+            let _ = qt.queue(move |mut o: Pin<&mut qobject::Controller>| {
+                o.as_mut().set_status(QString::from(msg.as_str()));
+                o.as_mut().set_running(false);
+            });
+        });
+    }
+}
+
+impl qobject::Controller {
+    /// The body to share/submit: prefer the structured JSON, else the text.
+    fn share_body(&self) -> Option<String> {
+        let json = self.last_json().to_string();
+        if !json.is_empty() {
+            Some(json)
+        } else {
+            let t = self.output().to_string();
+            if t.trim().is_empty() {
+                None
+            } else {
+                Some(t)
+            }
+        }
     }
 }
 
@@ -155,4 +366,61 @@ fn suite_label(kind: &str) -> &'static str {
         "info" => "system info",
         _ => "benchmark",
     }
+}
+
+fn strip_file_url(p: &str) -> String {
+    p.strip_prefix("file://").unwrap_or(p).to_string()
+}
+
+/// JSON of the current machine's headline facts (for the System tab cards).
+fn sys_facts_json() -> String {
+    let i = crucible::sysinfo::SysInfo::collect();
+    serde_json::json!({
+        "cpu_model": i.cpu_model,
+        "logical_cores": i.logical_cores,
+        "ram_mib": i.ram_mib,
+        "kernel": i.kernel,
+        "os": i.os,
+    })
+    .to_string()
+}
+
+/// (history array JSON, analysis object JSON) built from disk.
+fn history_payload() -> (String, String) {
+    let entries = crucible::history::list();
+    let arr: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|e| {
+            let s = &e.summary;
+            serde_json::json!({
+                "id": e.id,
+                "when": crucible::history::fmt_time(e.unix_time),
+                "cpu": s.cpu_model,
+                "headline": s.headline(),
+                "mt": s.composite_mt,
+                "st": s.composite_st,
+                "triad": s.mem_triad_gbs,
+                "down": s.net_down_mbps,
+                "up": s.net_up_mbps,
+                "lat": s.net_latency_ms,
+                "write": s.disk_seq_write_mbs,
+            })
+        })
+        .collect();
+
+    let best = |f: fn(&crucible::summary::Summary) -> Option<f64>| -> Option<f64> {
+        entries
+            .iter()
+            .filter_map(|e| f(&e.summary))
+            .fold(None, |acc: Option<f64>, v| Some(acc.map_or(v, |x| x.max(v))))
+    };
+    let analysis = serde_json::json!({
+        "count": entries.len(),
+        "best_mt": best(|s| s.composite_mt),
+        "best_st": best(|s| s.composite_st),
+        "best_triad": best(|s| s.mem_triad_gbs),
+        "best_down": best(|s| s.net_down_mbps),
+    });
+
+    (serde_json::Value::Array(arr).to_string(), analysis.to_string())
 }

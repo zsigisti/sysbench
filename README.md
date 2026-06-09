@@ -19,14 +19,22 @@ dependencies.
 CRUCIBLE compiles **natively on your machine** and puts it through a gauntlet:
 
 - **`crux bench`** — multi-threaded CPU suites, STREAM memory bandwidth, a
-  Cloudflare network test, and `O_DIRECT` storage I/O. Prints a report and
-  (by default) uploads a shareable copy.
+  Cloudflare network test, and `O_DIRECT` storage I/O. Prints a report, records
+  the run to local history, and (by default) shares a copy you can compare.
 - **`crux info`** — a fast, thorough system report. Think `fastfetch`, but
   deeper: full cache hierarchy, every mounted disk, thermals, batteries, and
   per-interface IPv4/IPv6.
 - **`crux-gui`** — an optional Qt 6 desktop GUI over the same engine. The CLI is
   fully standalone; the GUI lives in its own crate ([`gui/`](gui/README.md)) and
   is never required.
+
+CRUCIBLE has **two front-ends over one engine** — pick whichever you like, both
+report identical numbers:
+
+| | Front-end | Guide |
+|---|-----------|-------|
+| **CLI** | `crux` (+ `sysinfo` alias) | [docs/cli.md](docs/cli.md) |
+| **GUI** | `crux-gui` (Qt 6 desktop app) | [gui/README.md](gui/README.md) |
 
 The name is an acronym for what it measures:
 **C**ompute · **R**AM · **U**tilization · **C**ache · **I**/O · **B**andwidth ·
@@ -57,7 +65,8 @@ builds with `-C target-cpu=native`, and installs to `~/.local/bin` (or
 `man crux` page, and shell completions; the GUI install also adds a desktop
 entry + icon. From a local clone: `./install.sh [--gui|--all]`.
 
-Uninstall everything the script installed:
+Uninstall everything the script installed (also available as `crux uninstall`,
+the GUI's Settings → Uninstall, or with `--purge-data` to drop local history):
 
 ```sh
 ./install.sh --uninstall
@@ -87,24 +96,45 @@ RUSTFLAGS="-C target-cpu=native" cargo build --release
 crux                     # full benchmark (CPU + memory + network + storage)
 crux bench cpu           # one suite: cpu | mem | net | disk | all
 crux info                # deep system report (no benchmarking, no upload)
+crux submit              # full run, submit to the score server (leaderboard)
+crux history             # list locally recorded runs
+crux compare A B         # diff two runs (files or history ids)
+crux uninstall           # remove everything install.sh placed
 sysinfo                  # alias for `crux info`
 ```
 
-By default `crux bench` uploads results to [paste.rs](https://paste.rs) and
-prints a share URL. Disable with `--no-upload`.
+By default `crux bench` **records** each run locally and **shares** it to the
+CRUCIBLE score server (falling back to [paste.rs](https://paste.rs) if the
+server is unreachable), printing a URL. Disable with `--no-upload` /
+`--no-history`.
 
 ### Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--json` | off | Machine-readable JSON instead of the human report |
+| `--output <file>` | — | Also write the report (or `--json`) to a file |
 | `--duration <secs>` | `10` | Seconds per CPU test |
 | `--runs <n>` | `5` | Measured runs per CPU test (plus one warmup) |
 | `--streams <n>` | `4` | Parallel download streams for the network test |
 | `--dir <path>` | CWD | Scratch directory for the storage test |
-| `--no-upload` | off | Do **not** upload results (upload is on by default) |
+| `--no-upload` | off | Do **not** share results (sharing is on by default) |
+| `--no-history` | off | Do **not** record the run to local history |
 
 Full reference: **[docs/cli.md](docs/cli.md)**.
+
+### Sharing & the score server
+
+The default share target is the CRUCIBLE score server at
+**`https://crux.mmzsigmond.me`** (override with the `CRUX_SERVER` env var). It
+ranks machines and lets you compare results. To host the server yourself, hand
+**[web.md](web.md)** to a coding agent — it's a complete build runbook (Rust +
+axum + SQLite behind nginx). Fetch just that file anywhere with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/zsigisti/crucible/main/web.md -o web.md
+# or: ./scripts/get-server-guide.sh
+```
 
 ### GUI (optional)
 
@@ -145,6 +175,8 @@ STREAM kernels) are documented in **[docs/methodology.md](docs/methodology.md)**
 | [docs/sysinfo.md](docs/sysinfo.md) | Everything `crux info` reports and where it reads it from |
 | [docs/architecture.md](docs/architecture.md) | Codebase layout and module responsibilities |
 | [docs/packaging.md](docs/packaging.md) | AUR / deb / rpm packaging, host-native build model |
+| [gui/README.md](gui/README.md) | The `crux-gui` desktop app |
+| [web.md](web.md) | Build runbook for the score server (for an AI agent) |
 
 ---
 

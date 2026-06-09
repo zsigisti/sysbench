@@ -35,29 +35,51 @@ Build dependencies:
 
 ## What it does
 
-- Buttons to run the **Full Benchmark** or any individual suite (CPU, Memory,
-  Network, Storage), plus **System Info** (shown automatically on launch).
-- **Duration** and **Runs** settings feed straight into the CPU suites.
-- The **Full Benchmark** streams each suite's results into the pane as it
-  finishes, rather than one long opaque wait.
-- **Share** uploads the report to paste.rs and shows the URL; **Copy** copies it
-  to the clipboard; **Clear** resets the pane.
-- Runs the work on a background thread (the UI stays responsive) and marshals
-  results back via Qt signals.
-- Shows the same human-readable report as `crux`, in a monospace results pane.
+A tabbed, themeable desktop app over the same engine as the CLI. Everything it
+measures is produced by identical code, so the numbers match `crux` exactly.
 
-Uninstall (binary + desktop entry + icon) via the repo's
-`./install.sh --uninstall`.
+**Benchmark tab**
+- Run the **Full Benchmark** or any individual suite (CPU, Memory, Network,
+  Storage), plus **System Info**. **Duration** and **Runs** feed the CPU suites.
+- The Full Benchmark **streams** each suite in as it finishes, then merges the
+  results into one record and **records it to local history**.
+- **Submit** sends the run to the CRUCIBLE score server; **Share** uses the
+  server with a paste.rs fallback; **Copy** copies the report; **Export .txt**
+  and **Export .json** save it to disk; **Clear** resets the pane.
+
+**System tab** — the machine's headline facts (CPU, cores, RAM, kernel, OS) as
+clean key/value cards, plus a button to open the full deep report.
+
+**History tab** — local run analysis with no server required: a summary
+(runs recorded, best MT/ST/Triad), the list of past runs, and a **Compare**
+panel that diffs any two recorded runs metric-by-metric.
+
+**Settings tab** — dark/light theme toggle, score-server notes (`CRUX_SERVER`),
+and an **Uninstall** action (with optional "delete local history") that removes
+the installed binaries, man page, completions and desktop entry.
+
+All work runs on a background thread (the UI stays responsive) and is marshalled
+back onto the Qt event loop via `qt_thread().queue(...)`.
+
+The theme toggle (top-right or Settings) recolours the whole UI; history lives
+in `~/.local/share/crucible/history`. You can also uninstall from the CLI with
+`crux uninstall` or `./install.sh --uninstall`.
 
 ## Layout
 
-- `src/controller.rs` — the `#[cxx_qt::bridge]` `Controller` QObject: holds
-  `status` / `running` / `output` properties and a `run(kind)` invokable that
-  spawns the engine on a worker thread and marshals results back onto the Qt
-  event loop with `qt_thread().queue(...)`.
+- `src/controller.rs` — the `#[cxx_qt::bridge]` `Controller` QObject. Properties
+  (`status`, `running`, `output`, `share_url`, `backend`, `dark`, `has_results`,
+  `sys_facts`, `history`, `analysis`, `compare_text`, `last_json`) and invokables
+  (`run`, `share`, `submit`, `clear`, `export_report`, `export_json`,
+  `refresh_history`, `compare_runs`, `uninstall`). Benchmarks run on worker
+  threads and marshal back via `qt_thread().queue(...)`. JSON string properties
+  (history/analysis/sys_facts) are parsed in QML with `JSON.parse`.
 - `src/main.rs` — boots `QGuiApplication` + `QQmlApplicationEngine`.
-- `qml/main.qml` — the UI.
-- `build.rs` — `cxx-qt-build` wires the QML module + Rust bridge together.
+- `qml/main.qml` — the tabbed UI (Benchmark / System / History / Settings).
+- `qml/Theme.qml` — the palette object (a single `dark` flag recolours all).
+- `qml/Card.qml` — the reusable titled surface panel.
+- `build.rs` — `cxx-qt-build` wires the QML module + Rust bridge together; all
+  three QML files are registered in its `qml_files([...])`.
 
 ## Desktop integration
 

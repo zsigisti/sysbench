@@ -78,6 +78,35 @@ pub fn run(suite: Suite, cfg: &Config, info: SysInfo) -> FullResults {
     r
 }
 
+/// Merge several partial results (each populating one suite) into one record.
+/// `sysinfo` is taken from the first part; each suite field is filled from
+/// whichever part has it. Used by the GUI's streaming "Full Benchmark" so the
+/// per-suite runs still yield a single JSON artifact for export/submit/history.
+pub fn merge(parts: Vec<FullResults>) -> Option<FullResults> {
+    let mut it = parts.into_iter();
+    let mut acc = it.next()?;
+    for p in it {
+        if acc.cpu.is_none() {
+            acc.cpu = p.cpu;
+        }
+        if acc.mem.is_none() {
+            acc.mem = p.mem;
+        }
+        if acc.net.is_none() {
+            acc.net = p.net;
+        }
+        if acc.disk.is_none() {
+            acc.disk = p.disk;
+        }
+    }
+    Some(acc)
+}
+
+/// Serialize results to pretty JSON (the on-disk / upload format).
+pub fn to_json(full: &FullResults) -> Result<String, String> {
+    serde_json::to_string_pretty(full).map_err(|e| e.to_string())
+}
+
 // ============================================================
 // Human-readable printers
 // ============================================================
