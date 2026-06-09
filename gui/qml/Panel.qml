@@ -15,8 +15,13 @@ Rectangle {
     radius: pal ? pal.radius : 12
     border.color: pal ? pal.border : "#262b36"
     border.width: 1
+    // Derive size from content so panels that aren't `Layout.fillHeight`
+    // don't collapse to zero height (the +28 is the 14px margins on each side).
+    implicitHeight: layout.implicitHeight + 28
+    implicitWidth: layout.implicitWidth + 28
 
     ColumnLayout {
+        id: layout
         anchors.fill: parent
         anchors.margins: 14
         spacing: 10

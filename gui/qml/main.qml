@@ -33,6 +33,25 @@ ApplicationWindow {
     readonly property int radius: 12
     readonly property string mono: "monospace"
 
+    // Theme every standard (Basic-style) control via the inherited palette, so
+    // SpinBox/ComboBox/TextField/Dialog text isn't black-on-dark. Children
+    // inherit this palette automatically.
+    palette.window: win.bg
+    palette.windowText: win.text
+    palette.base: win.surface
+    palette.alternateBase: win.surface2
+    palette.text: win.text
+    palette.button: win.surface2
+    palette.buttonText: win.text
+    palette.mid: win.border
+    palette.dark: win.border
+    palette.light: win.surface2
+    palette.highlight: win.accent
+    palette.highlightedText: "#ffffff"
+    palette.placeholderText: win.subtle
+    palette.toolTipBase: win.surface
+    palette.toolTipText: win.text
+
     property int tab: 0
     readonly property var tabTitles: ["Benchmark", "System", "History", "Settings"]
 
