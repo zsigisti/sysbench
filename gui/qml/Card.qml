@@ -1,5 +1,6 @@
 // A titled surface panel. Children are laid out in a column inside it.
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 Rectangle {
