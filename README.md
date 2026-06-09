@@ -13,7 +13,7 @@ system-info tool — written in Rust, no runtime dependencies.
 [![Language](https://img.shields.io/badge/Rust-2021-e0552b?logo=rust&logoColor=white)](Cargo.toml)
 [![GUI](https://img.shields.io/badge/GUI-Qt%206%20%2F%20QML-46c95a)](gui/README.md)
 
-<img src="assets/gui-preview.svg" alt="crux-gui preview" width="760">
+<img src="assets/index.png" alt="crux-gui — the CRUCIBLE desktop app" width="820">
 
 </div>
 
