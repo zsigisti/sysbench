@@ -74,12 +74,19 @@ in `~/.local/share/crucible/history`. You can also uninstall from the CLI with
   `refresh_history`, `compare_runs`, `uninstall`). Benchmarks run on worker
   threads and marshal back via `qt_thread().queue(...)`. JSON string properties
   (history/analysis/sys_facts) are parsed in QML with `JSON.parse`.
-- `src/main.rs` — boots `QGuiApplication` + `QQmlApplicationEngine`.
-- `qml/main.qml` — the tabbed UI (Benchmark / System / History / Settings).
-- `qml/Theme.qml` — the palette object (a single `dark` flag recolours all).
-- `qml/Card.qml` — the reusable titled surface panel.
-- `build.rs` — `cxx-qt-build` wires the QML module + Rust bridge together; all
-  three QML files are registered in its `qml_files([...])`.
+- `src/main.rs` — boots `QGuiApplication` + `QQmlApplicationEngine`. Forces the
+  **Basic** Quick Controls style (`QT_QUICK_CONTROLS_STYLE`) so a distro style
+  like KDE Breeze can't override the custom theming.
+- `qml/main.qml` — the UI: a left nav rail (Benchmark / System / History /
+  Settings) + content. The palette lives as `readonly property color …` on the
+  **root** `ApplicationWindow` id (driven by `ctl.dark`) so it resolves inside
+  `Repeater`/`ListView` delegates too.
+- `qml/StatCard.qml` — a pure key/value tile (plain props only) used inside grid
+  delegates; `qml/Panel.qml` — a titled surface used outside delegates.
+- `assets/logo.svg` is copied to `qml/logo.svg` by `build.rs` and bundled into
+  the module via `qrc_resources`, so the UI shows the real logo.
+- `build.rs` — `cxx-qt-build` wires the QML module + Rust bridge; QML files are
+  registered in `qml_files([...])` and the logo in `qrc_resources([...])`.
 
 ## Desktop integration
 

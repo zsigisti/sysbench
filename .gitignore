@@ -5,3 +5,6 @@
 
 # cxx-qt-generated QML language-server config (machine-specific path)
 /gui/.qmlls.ini
+
+# build.rs copies the canonical logo here for bundling
+/gui/qml/logo.svg

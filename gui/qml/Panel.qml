@@ -1,31 +1,30 @@
-// A titled surface panel. Children are laid out in a column inside it.
+// A titled surface panel. Children declared in the caller's scope are laid out
+// in a column under the title. Used outside delegates, so referencing the
+// caller's root id in child bindings is safe.
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 Rectangle {
-    id: card
-    property var theme
+    id: panel
+    property var pal
     property string title: ""
     default property alias content: body.data
 
-    color: theme ? theme.surface : "#191c23"
-    radius: theme ? theme.radius : 10
-    border.color: theme ? theme.border : "#2c313d"
+    color: pal ? pal.surface : "#15181f"
+    radius: pal ? pal.radius : 12
+    border.color: pal ? pal.border : "#262b36"
     border.width: 1
-    implicitHeight: col.implicitHeight + 24
-    implicitWidth: col.implicitWidth + 24
 
     ColumnLayout {
-        id: col
         anchors.fill: parent
-        anchors.margins: 12
+        anchors.margins: 14
         spacing: 10
 
         Label {
-            visible: card.title.length > 0
-            text: card.title
-            color: theme ? theme.subtle : "#9aa1b1"
+            visible: panel.title.length > 0
+            text: panel.title
+            color: pal ? pal.subtle : "#9aa1b1"
             font.bold: true
             font.pixelSize: 11
             font.capitalization: Font.AllUppercase
