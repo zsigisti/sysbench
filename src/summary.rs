@@ -27,6 +27,10 @@ pub struct Summary {
     pub net_latency_ms: Option<f64>,
     pub disk_seq_write_mbs: Option<f64>,
     pub disk_seq_read_mbs: Option<f64>,
+
+    // GPU render benchmark (GUI-only; absent from CLI runs).
+    pub render_score: Option<f64>,
+    pub render_fps: Option<f64>,
 }
 
 fn f(v: &Value, path: &[&str]) -> Option<f64> {
@@ -73,6 +77,9 @@ impl Summary {
             net_latency_ms: f(v, &["net", "latency", "Ok", "avg_ms"]),
             disk_seq_write_mbs: f(v, &["disk", "seq_write_mbs"]),
             disk_seq_read_mbs: f(v, &["disk", "seq_read_mbs"]),
+
+            render_score: f(v, &["render", "score"]),
+            render_fps: f(v, &["render", "fps"]),
         }
     }
 

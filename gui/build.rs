@@ -11,7 +11,12 @@ fn main() {
 
     CxxQtBuilder::new_qml_module(
         QmlModule::new("com.crucible.gui")
-            .qml_files(["qml/main.qml", "qml/Panel.qml", "qml/StatCard.qml"]),
+            .qml_files([
+                "qml/main.qml",
+                "qml/Panel.qml",
+                "qml/StatCard.qml",
+                "qml/RenderBench.qml",
+            ]),
     )
     .qrc_resources(["qml/logo.svg"])
     .qt_module("Quick")

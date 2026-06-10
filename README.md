@@ -84,6 +84,7 @@ fallback). Every command, subcommand, and flag → **[docs/cli.md](docs/cli.md)*
 | **Memory** | STREAM Copy / Scale / Add / Triad | GB/s |
 | **Network** | Cloudflare latency (+jitter), download, upload | ms, Mbps |
 | **Storage** | sequential R/W, random 4K latency, `O_DIRECT` | MB/s, µs (p50/p99) |
+| **Render** *(GUI only)* | adaptive GPU scene-graph load via Vulkan/OpenGL — ramps animated items until fps drops, then measures a sustained window | score (items × fps), avg/1%-low fps |
 
 The algorithms, why they're trustworthy, and the bugs fixed along the way live
 in **[docs/methodology.md](docs/methodology.md)**.

@@ -30,6 +30,8 @@ pub mod qobject {
         // The JSON of the last completed run; kept as a property so it survives
         // across the bridge for export/share/submit. Not shown in the UI.
         #[qproperty(QString, last_json)]
+        // The last render-benchmark result JSON (from RenderBench.qml).
+        #[qproperty(QString, render_result)]
         type Controller = super::ControllerRust;
 
         /// Run a suite: "all" | "cpu" | "mem" | "net" | "disk" | "info".
@@ -67,6 +69,11 @@ pub mod qobject {
         /// Remove installed files. `purge` also deletes local history.
         #[qinvokable]
         fn uninstall(self: Pin<&mut Controller>, purge: bool);
+
+        /// Record a finished GPU render benchmark (JSON from RenderBench.qml):
+        /// merges a "render" section into the run JSON and records to history.
+        #[qinvokable]
+        fn record_render(self: Pin<&mut Controller>, json: QString);
     }
 
     impl cxx_qt::Threading for Controller {}
@@ -89,6 +96,7 @@ pub struct ControllerRust {
     analysis: QString,
     compare_text: QString,
     last_json: QString,
+    render_result: QString,
 }
 
 impl Default for ControllerRust {
@@ -107,6 +115,7 @@ impl Default for ControllerRust {
             analysis: QString::from(analysis.as_str()),
             compare_text: QString::from(""),
             last_json: QString::from(""),
+            render_result: QString::from(""),
         }
     }
 }
@@ -276,6 +285,7 @@ impl qobject::Controller {
         self.as_mut().set_backend(QString::from(""));
         self.as_mut().set_has_results(false);
         self.as_mut().set_last_json(QString::from(""));
+        self.as_mut().set_render_result(QString::from(""));
         self.as_mut().set_status(QString::from("Ready."));
     }
 
@@ -320,6 +330,54 @@ impl qobject::Controller {
             _ => "Could not load one of the runs.".to_string(),
         };
         self.as_mut().set_compare_text(QString::from(text.as_str()));
+    }
+
+    pub fn record_render(mut self: Pin<&mut Self>, json: QString) {
+        let raw = json.to_string();
+        let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                self.as_mut()
+                    .set_status(QString::from(format!("Render result rejected: {}", e).as_str()));
+                return;
+            }
+        };
+        self.as_mut().set_render_result(QString::from(raw.as_str()));
+
+        // Merge a "render" section into the run JSON so Share/Submit/Export and
+        // history all carry it. A render-only run still needs sysinfo (it holds
+        // the stable machine_id the score server keys on).
+        let cur = self.last_json().to_string();
+        let mut root: serde_json::Value =
+            serde_json::from_str(&cur).unwrap_or(serde_json::Value::Null);
+        if !root.is_object() {
+            root = serde_json::json!({ "sysinfo": crucible::sysinfo::SysInfo::collect() });
+        }
+        root["render"] = parsed.clone();
+        let merged = root.to_string();
+
+        let recorded = crucible::history::record(&merged).map(|e| e.id);
+        let (hist, analysis) = history_payload();
+
+        self.as_mut().set_last_json(QString::from(merged.as_str()));
+        self.as_mut().set_has_results(true);
+        self.as_mut().set_history(QString::from(hist.as_str()));
+        self.as_mut().set_analysis(QString::from(analysis.as_str()));
+
+        let score = parsed.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
+        let fps = parsed.get("fps").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let api = parsed.get("api").and_then(|v| v.as_str()).unwrap_or("?");
+        let msg = match recorded {
+            Ok(id) => format!(
+                "Render done — score {} ({:.0} fps, {}); recorded {}.",
+                score, fps, api, id
+            ),
+            Err(e) => format!(
+                "Render done — score {} ({:.0} fps, {}); history not saved: {}.",
+                score, fps, api, e
+            ),
+        };
+        self.as_mut().set_status(QString::from(msg.as_str()));
     }
 
     pub fn uninstall(mut self: Pin<&mut Self>, purge: bool) {
@@ -381,6 +439,7 @@ fn sys_facts_json() -> String {
         "ram_mib": i.ram_mib,
         "kernel": i.kernel,
         "os": i.os,
+        "machine_id": i.machine_id,
     })
     .to_string()
 }
@@ -404,6 +463,7 @@ fn history_payload() -> (String, String) {
                 "up": s.net_up_mbps,
                 "lat": s.net_latency_ms,
                 "write": s.disk_seq_write_mbs,
+                "render": s.render_score,
             })
         })
         .collect();
@@ -420,6 +480,7 @@ fn history_payload() -> (String, String) {
         "best_st": best(|s| s.composite_st),
         "best_triad": best(|s| s.mem_triad_gbs),
         "best_down": best(|s| s.net_down_mbps),
+        "best_render": best(|s| s.render_score),
     });
 
     (serde_json::Value::Array(arr).to_string(), analysis.to_string())

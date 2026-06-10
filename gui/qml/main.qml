@@ -53,7 +53,9 @@ ApplicationWindow {
     palette.toolTipText: win.text
 
     property int tab: 0
-    readonly property var tabTitles: ["Benchmark", "System", "History", "Settings"]
+    readonly property var tabTitles: ["Benchmark", "Render", "System", "History", "Settings"]
+    // leaving the Render tab mid-run would distort the load → abort the bench
+    onTabChanged: if (tab !== 1) renderBench.stop()
 
     // parsed views of the controller's JSON string properties
     property var facts: ctl.sys_facts.length ? JSON.parse(ctl.sys_facts) : ({})
@@ -163,9 +165,10 @@ ApplicationWindow {
                 Item { Layout.preferredHeight: 12 }
 
                 NavItem { text: "Benchmark"; index: 0 }
-                NavItem { text: "System";    index: 1 }
-                NavItem { text: "History";   index: 2 }
-                NavItem { text: "Settings";  index: 3 }
+                NavItem { text: "Render";    index: 1 }
+                NavItem { text: "System";    index: 2 }
+                NavItem { text: "History";   index: 3 }
+                NavItem { text: "Settings";  index: 4 }
 
                 Item { Layout.fillHeight: true }
 
@@ -199,7 +202,7 @@ ApplicationWindow {
                         spacing: 8
                         Label { text: "Duration"; color: win.subtle }
                         SpinBox { id: durationSpin; from: 1; to: 60; value: 10; enabled: !ctl.running
-                            textFromValue: function(v) { return v + "s" }; implicitWidth: 96 }
+                            textFromValue: function(v) { return v + "s" }; implicitWidth: 110 }
                         Label { text: "Runs"; color: win.subtle }
                         SpinBox { id: runsSpin; from: 1; to: 9; value: 5; enabled: !ctl.running; implicitWidth: 74 }
                     }
@@ -293,6 +296,67 @@ ApplicationWindow {
                     }
                 }
 
+                // ───────────────────────── Render ─────────────────────────────
+                ColumnLayout {
+                    spacing: 14
+                    Item { Layout.preferredHeight: 8 }
+
+                    RowLayout {
+                        Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                        spacing: 8
+                        Primary {
+                            text: renderBench.active ? "Running…" : "Run Render Benchmark"
+                            enabled: !renderBench.active
+                            onClicked: renderBench.start()
+                        }
+                        Pill { text: "Stop"; enabled: renderBench.active; onClicked: renderBench.stop() }
+                        Item { Layout.fillWidth: true }
+                        Label {
+                            color: win.subtle
+                            text: renderBench.active
+                                ? renderBench.phaseName + " · " + renderBench.items + " items · " + renderBench.liveFps.toFixed(0) + " fps"
+                                : (renderBench.phase === 4 ? "Done — carried into Submit / Share / Export."
+                                                           : "Adaptive GPU load via OpenGL/Vulkan (Qt RHI).")
+                        }
+                    }
+
+                    GridLayout {
+                        Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                        columns: 5; columnSpacing: 12; rowSpacing: 12
+                        StatCard { pal: win; label: "Render score"; accent: true; Layout.fillWidth: true
+                            value: renderBench.phase === 4 ? String(renderBench.score) : "—" }
+                        StatCard { pal: win; label: "Avg FPS"; Layout.fillWidth: true
+                            value: renderBench.phase === 4 ? renderBench.avgFps.toFixed(1) : "—" }
+                        StatCard { pal: win; label: "1% low FPS"; Layout.fillWidth: true
+                            value: renderBench.phase === 4 ? renderBench.low1Fps.toFixed(1) : "—" }
+                        StatCard { pal: win; label: "Sustained items"; Layout.fillWidth: true
+                            value: renderBench.phase === 4 ? String(renderBench.peakItems) : "—" }
+                        StatCard { pal: win; label: "Graphics API"; Layout.fillWidth: true
+                            value: renderBench.phase === 4 ? renderBench.apiName : "—" }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                        Layout.preferredHeight: 6
+                        radius: 3; color: win.surface2
+                        visible: renderBench.active || renderBench.phase === 4
+                        Rectangle {
+                            width: parent.width * renderBench.progress
+                            height: parent.height; radius: 3; color: win.accent
+                        }
+                    }
+
+                    // the arena itself — RenderBench draws + measures in here
+                    RenderBench {
+                        id: renderBench
+                        pal: win
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 22
+                        Layout.minimumHeight: 240
+                        onFinished: function(resultJson) { ctl.record_render(resultJson) }
+                    }
+                }
+
                 // ───────────────────────── System ─────────────────────────────
                 ColumnLayout {
                     spacing: 14
@@ -306,7 +370,8 @@ ApplicationWindow {
                                 { k: "Logical cores", v: (win.facts.logical_cores !== undefined ? String(win.facts.logical_cores) : "—") },
                                 { k: "Memory", v: (win.facts.ram_mib ? (win.facts.ram_mib/1024).toFixed(1) + " GiB" : "—") },
                                 { k: "Kernel", v: win.facts.kernel || "—" },
-                                { k: "OS", v: win.facts.os || "—" }
+                                { k: "OS", v: win.facts.os || "—" },
+                                { k: "Machine ID", v: win.facts.machine_id || "—" }
                             ]
                             delegate: StatCard { pal: win; label: modelData.k; value: modelData.v; Layout.fillWidth: true; Layout.minimumWidth: 200 }
                         }
@@ -333,13 +398,14 @@ ApplicationWindow {
 
                     GridLayout {
                         Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
-                        columns: 4; columnSpacing: 12; rowSpacing: 12
+                        columns: 5; columnSpacing: 12; rowSpacing: 12
                         Repeater {
                             model: [
                                 { k: "Runs recorded", v: win.fnum(win.ana.count), a: false },
                                 { k: "Best CPU (MT)", v: win.fnum(win.ana.best_mt), a: true },
                                 { k: "Best CPU (ST)", v: win.fnum(win.ana.best_st), a: true },
-                                { k: "Best Triad", v: win.fnum(win.ana.best_triad, 1) + " GB/s", a: true }
+                                { k: "Best Triad", v: win.fnum(win.ana.best_triad, 1) + " GB/s", a: true },
+                                { k: "Best Render", v: win.fnum(win.ana.best_render), a: true }
                             ]
                             delegate: StatCard { pal: win; label: modelData.k; value: modelData.v; accent: modelData.a; Layout.fillWidth: true }
                         }

@@ -31,9 +31,16 @@ metric as optional — partial runs happen):
   "mem":  { "triad_gbs": 45.0 },
   "net":  { "download_mbps": {"Ok": 300.0}, "upload_mbps": {"Ok": 55.0},
             "latency": {"Ok": {"avg_ms": 9.8}} },
-  "disk": { "seq_write_mbs": 3000, "seq_read_mbs": 3500 }
+  "disk": { "seq_write_mbs": 3000, "seq_read_mbs": 3500 },
+  "render": { "score": 4800, "fps": 142.3, "low1_fps": 96.1, "items": 3375,
+              "api": "Vulkan", "refresh_hz": 144.0 }
 }
 ```
+
+`render` is the GPU render benchmark — **GUI-only and optional** (CLI runs never
+send it). `render.score` is throughput (sustained animated items × fps / 100,
+higher is better), `render.api` is the graphics backend ("Vulkan", "OpenGL",
+"Metal", …).
 
 Note `net.*` values are serde-`Result`-encoded: read `["net"]["download_mbps"]["Ok"]`.
 
@@ -90,7 +97,8 @@ A leaderboard row (`GET /api/results`) is:
 { "id": "ab12cd34ef56", "when": "2026-06-09T10:21:00Z", "cpu_model": "…",
   "cores": 16, "ram_mib": 32000, "os": "…",
   "composite_mt": 12000, "composite_st": 1300, "speedup": 8.9,
-  "mem_triad_gbs": 45.0, "net_down_mbps": 300.0, "disk_seq_write_mbs": 3000 }
+  "mem_triad_gbs": 45.0, "net_down_mbps": 300.0, "disk_seq_write_mbs": 3000,
+  "render_score": 4800, "render_api": "Vulkan" }
 ```
 
 ---
@@ -115,9 +123,22 @@ CREATE TABLE IF NOT EXISTS results (
   net_up_mbps         REAL,
   net_latency_ms      REAL,
   disk_seq_write_mbs  REAL,
-  disk_seq_read_mbs   REAL
+  disk_seq_read_mbs   REAL,
+  render_score        REAL,                    -- GPU render benchmark (GUI-only)
+  render_fps          REAL,
+  render_api          TEXT                     -- "Vulkan" / "OpenGL" / …
 );
 CREATE INDEX IF NOT EXISTS idx_results_mt ON results(composite_mt DESC);
+```
+
+If the database already exists from a previous deploy, migrate it in place
+(run on boot, ignoring "duplicate column" errors — SQLite has no
+`ADD COLUMN IF NOT EXISTS`):
+
+```sql
+ALTER TABLE results ADD COLUMN render_score REAL;
+ALTER TABLE results ADD COLUMN render_fps   REAL;
+ALTER TABLE results ADD COLUMN render_api   TEXT;
 ```
 
 Insert with an upsert that **merges** metrics so a machine ends up with one
@@ -129,7 +150,8 @@ into a single row instead of overwriting each other:
 ```sql
 INSERT INTO results (id, created_at, raw, cpu_model, cores, ram_mib, os, kernel,
   composite_mt, composite_st, speedup, mem_triad_gbs, net_down_mbps, net_up_mbps,
-  net_latency_ms, disk_seq_write_mbs, disk_seq_read_mbs)
+  net_latency_ms, disk_seq_write_mbs, disk_seq_read_mbs,
+  render_score, render_fps, render_api)
 VALUES (?1, ?2, ?3, ?4, …)
 ON CONFLICT(id) DO UPDATE SET
   -- identity / freshness: always take the latest submission
@@ -149,7 +171,10 @@ ON CONFLICT(id) DO UPDATE SET
   net_up_mbps        = COALESCE(excluded.net_up_mbps, net_up_mbps),
   net_latency_ms     = COALESCE(excluded.net_latency_ms, net_latency_ms),
   disk_seq_write_mbs = COALESCE(excluded.disk_seq_write_mbs, disk_seq_write_mbs),
-  disk_seq_read_mbs  = COALESCE(excluded.disk_seq_read_mbs, disk_seq_read_mbs);
+  disk_seq_read_mbs  = COALESCE(excluded.disk_seq_read_mbs, disk_seq_read_mbs),
+  render_score       = COALESCE(excluded.render_score, render_score),
+  render_fps         = COALESCE(excluded.render_fps, render_fps),
+  render_api         = COALESCE(excluded.render_api, render_api);
 ```
 
 (A full `crux submit` measures everything at once, so it fills the whole row in
@@ -188,7 +213,9 @@ Implement (`src/main.rs`, split into modules as it grows):
    `https://crux.mmzsigmond.me`).
 3. **Extraction helper**: a `fn summarize(v: &serde_json::Value) -> Summary`
    that pulls the columns above using the JSON paths in §0 (mirror the client's
-   `summary.rs` logic — note the `["Ok"]` nesting for net values).
+   `summary.rs` logic — note the `["Ok"]` nesting for net values). The render
+   fields live at the **top level**: `["render"]["score"]`, `["render"]["fps"]`
+   (numbers) and `["render"]["api"]` (string); all optional.
 4. **Handlers** per the contract. For `POST`: parse JSON → `id =
    sysinfo.machine_id` (random 12-hex fallback) → **upsert** raw + summary →
    return `{id,url}`. For the HTML pages, render the leaderboard and single-result
@@ -235,7 +262,9 @@ HTML (no SPA). Requirements:
 
 **The table**
 - Columns: **Rank · Machine · Cores · RAM · OS · MT · ST · Speedup · Triad ·
-  Disk W · Net ↓ · When**.
+  Disk W · Net ↓ · Render · When**.
+- **Render** shows `render_score` as an integer; give it a `title=` tooltip with
+  the API and fps (e.g. "Vulkan · 142 fps"). `—` when absent (CLI-only machines).
 - **Rank**: top 3 get medals (🥇🥈🥉) and a subtly highlighted row; others show
   `#4`, `#5`, … in muted grey.
 - **Machine**: CPU model in full-weight text; if it's long, allow it to be the
@@ -257,7 +286,8 @@ HTML (no SPA). Requirements:
 **Single-result page (`/r/:id`)**
 - A big score card at top: CPU model, MT score (hero), ST, speedup.
 - A clean key/value grid of every metric (CPU composite ST/MT, memory triad,
-  disk read/write, net down/up/latency, kernel, OS, RAM, cores).
+  disk read/write, net down/up/latency, render score/fps/API, kernel, OS, RAM,
+  cores).
 - This machine's **current rank** ("#3 of 27") and a "← back to leaderboard" link.
 - A "Copy result link" button (tiny inline JS) and a "Download JSON" link that
   serves the stored `raw`.
@@ -363,6 +393,10 @@ The operator points Cloudflare Zero Trust (tunnel) at this nginx vhost; you do
       `composite_mt` desc.
 - [ ] `GET /r/:id` renders a single result with the metric grid, current rank,
       copy-link, and JSON download.
+- [ ] The optional `render` section is stored (`render_score`/`render_fps`/
+      `render_api` columns, COALESCE-merged) and shown in the leaderboard's
+      **Render** column and the result page; an existing DB is migrated with the
+      `ALTER TABLE` statements in §2.
 - [ ] Existing throwaway rows have been **cleared** (§3b) so the board starts clean.
 - [ ] Service survives reboot (systemd) and is reachable through nginx on `:80`.
 - [ ] Running `crux` on a real machine makes it appear on the leaderboard

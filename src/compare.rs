@@ -49,6 +49,8 @@ pub fn deltas(a: &Summary, b: &Summary) -> Vec<Delta> {
     push("Net latency", "ms", false, a.net_latency_ms, b.net_latency_ms);
     push("Disk seq write", "MB/s", true, a.disk_seq_write_mbs, b.disk_seq_write_mbs);
     push("Disk seq read", "MB/s", true, a.disk_seq_read_mbs, b.disk_seq_read_mbs);
+    push("Render score", "", true, a.render_score, b.render_score);
+    push("Render fps", "fps", true, a.render_fps, b.render_fps);
     out
 }
 
