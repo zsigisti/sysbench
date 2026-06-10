@@ -11,6 +11,10 @@ pub struct SysInfo {
     pub ram_mib: u64,
     pub kernel: String,
     pub os: String,
+    /// Stable, anonymized per-machine identifier. The same machine always
+    /// reports the same value, so the score server can collapse a machine's
+    /// repeated submissions into a single leaderboard row.
+    pub machine_id: String,
 }
 
 impl SysInfo {
@@ -21,6 +25,7 @@ impl SysInfo {
             ram_mib: read_mem_total_mib(),
             kernel: read_kernel(),
             os: read_os(),
+            machine_id: read_machine_id(),
         }
     }
 
@@ -100,4 +105,40 @@ fn read_os() -> String {
         }
     }
     "unknown".to_string()
+}
+
+/// Compute a stable, anonymized per-machine identifier.
+///
+/// Seeded from `/etc/machine-id` (or the D-Bus machine-id) when available, so
+/// the raw id never leaves the box — only its hash does. Falls back to a hash
+/// of stable hardware facts when no machine-id file exists. Deterministic: the
+/// same machine yields the same 12-hex string on every run, which the score
+/// server uses to dedupe submissions into one leaderboard row per machine.
+fn read_machine_id() -> String {
+    let seed = read_first_nonempty(&["/etc/machine-id", "/var/lib/dbus/machine-id"])
+        .unwrap_or_else(|| format!("{}|{}|{}", read_cpu_model(), read_mem_total_mib(), read_os()));
+    fnv1a_hex(&format!("crux:{seed}"))
+}
+
+fn read_first_nonempty(paths: &[&str]) -> Option<String> {
+    for p in paths {
+        if let Ok(s) = fs::read_to_string(p) {
+            let t = s.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 12-hex-char FNV-1a digest — enough to identify a machine, no crypto dep.
+fn fnv1a_hex(s: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let hex = format!("{hash:016x}");
+    hex[..12].to_string()
 }
