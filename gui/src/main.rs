@@ -1,6 +1,7 @@
 // crux-gui — Qt/QML front-end for the CRUCIBLE benchmark engine.
 
 pub mod controller;
+pub mod prefs;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
 
@@ -12,6 +13,14 @@ fn main() {
     // Set before the engine is created — Qt reads it during QML init.
     if std::env::var_os("QT_QUICK_CONTROLS_STYLE").is_none() {
         std::env::set_var("QT_QUICK_CONTROLS_STYLE", "Basic");
+    }
+
+    // Apply the persisted renderer choice (Render/Settings tab toggle). Qt
+    // picks the RHI backend once at startup, so the toggle is prefs + relaunch.
+    // "auto" leaves Qt's default — and any QSG_RHI_BACKEND the user set — alone.
+    let p = prefs::load();
+    if matches!(p.render_backend.as_str(), "opengl" | "vulkan") {
+        std::env::set_var("QSG_RHI_BACKEND", &p.render_backend);
     }
 
     let mut app = QGuiApplication::new();

@@ -57,6 +57,10 @@ measures is produced by identical code, so the numbers match `crux` exactly.
 - The result is merged into the run JSON as a `"render"` section, so **Submit /
   Share / Export** carry it and the leaderboard can rank it; it is also recorded
   to local history and shows up in Compare.
+- A **backend toggle** (Auto / OpenGL / Vulkan) — Qt fixes the RHI backend at
+  startup, so the choice is persisted to `~/.config/crucible/gui.json`, applied
+  as `QSG_RHI_BACKEND` at launch, and a one-click **Restart to apply** relaunches
+  the app. The currently active API is shown live (probed via `GraphicsInfo`).
 
 **System tab** — the machine's headline facts (CPU, cores, RAM, kernel, OS,
 anonymized machine ID) as clean key/value cards, plus a button to open the full
@@ -66,9 +70,10 @@ deep report.
 (runs recorded, best MT/ST/Triad/Render), the list of past runs, and a
 **Compare** panel that diffs any two recorded runs metric-by-metric.
 
-**Settings tab** — dark/light theme toggle, score-server notes (`CRUX_SERVER`),
-and an **Uninstall** action (with optional "delete local history") that removes
-the installed binaries, man page, completions and desktop entry.
+**Settings tab** — dark/light theme toggle (persisted), the renderer backend
+toggle, score-server notes (`CRUX_SERVER`), and an **Uninstall** action (with
+optional "delete local history") that removes the installed binaries, man page,
+completions and desktop entry.
 
 All work runs on a background thread (the UI stays responsive) and is marshalled
 back onto the Qt event loop via `qt_thread().queue(...)`.
@@ -82,14 +87,18 @@ in `~/.local/share/crucible/history`. You can also uninstall from the CLI with
 - `src/controller.rs` — the `#[cxx_qt::bridge]` `Controller` QObject. Properties
   (`status`, `running`, `output`, `share_url`, `backend`, `dark`, `has_results`,
   `sys_facts`, `history`, `analysis`, `compare_text`, `last_json`,
-  `render_result`) and invokables (`run`, `share`, `submit`, `clear`,
-  `export_report`, `export_json`, `refresh_history`, `compare_runs`,
-  `uninstall`, `record_render`). Benchmarks run on worker
+  `render_result`, `render_backend`, `boot_backend`, `app_version`) and
+  invokables (`run`, `share`, `submit`, `clear`, `export_report`, `export_json`,
+  `refresh_history`, `compare_runs`, `uninstall`, `record_render`,
+  `choose_render_backend`, `set_dark_pref`, `restart`). Benchmarks run on worker
   threads and marshal back via `qt_thread().queue(...)`. JSON string properties
   (history/analysis/sys_facts) are parsed in QML with `JSON.parse`.
 - `src/main.rs` — boots `QGuiApplication` + `QQmlApplicationEngine`. Forces the
   **Basic** Quick Controls style (`QT_QUICK_CONTROLS_STYLE`) so a distro style
-  like KDE Breeze can't override the custom theming.
+  like KDE Breeze can't override the custom theming, and applies the persisted
+  renderer choice as `QSG_RHI_BACKEND` before Qt starts.
+- `src/prefs.rs` — tiny persisted preferences (`~/.config/crucible/gui.json`):
+  theme + renderer backend, written atomically (temp file + rename).
 - `qml/main.qml` — the UI: a left nav rail (Benchmark / Render / System /
   History / Settings) + content. The palette lives as `readonly property color …`
   on the **root** `ApplicationWindow` id (driven by `ctl.dark`) so it resolves

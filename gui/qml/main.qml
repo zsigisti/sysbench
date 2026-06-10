@@ -54,6 +54,13 @@ ApplicationWindow {
 
     property int tab: 0
     readonly property var tabTitles: ["Benchmark", "Render", "System", "History", "Settings"]
+    readonly property var tabSubtitles: [
+        "Run suites, then share or submit your score",
+        "GPU scene-graph benchmark — OpenGL / Vulkan",
+        "What this machine is",
+        "Local runs — analyze and compare",
+        "Preferences"
+    ]
     // leaving the Render tab mid-run would distort the load → abort the bench
     onTabChanged: if (tab !== 1) renderBench.stop()
 
@@ -71,6 +78,7 @@ ApplicationWindow {
         property color fg: win.text
         font.pixelSize: 13
         padding: 9; leftPadding: 16; rightPadding: 16
+        HoverHandler { cursorShape: Qt.PointingHandCursor }
         background: Rectangle {
             radius: 8
             color: !pb.enabled ? win.surface2
@@ -79,6 +87,7 @@ ApplicationWindow {
             border.color: win.border
             border.width: 1
             opacity: pb.enabled ? 1 : 0.45
+            Behavior on color { ColorAnimation { duration: 100 } }
         }
         contentItem: Label {
             text: pb.text; color: pb.fg
@@ -92,19 +101,76 @@ ApplicationWindow {
     component NavItem: Button {
         id: nv
         property int index: 0
+        property string glyph: ""
         checkable: true
         checked: win.tab === index
         onClicked: win.tab = index
         Layout.fillWidth: true
         padding: 10
+        HoverHandler { cursorShape: Qt.PointingHandCursor }
         background: Rectangle {
             radius: 8
             color: nv.checked ? win.activeBg : (nv.hovered ? win.hoverBg : "transparent")
+            Behavior on color { ColorAnimation { duration: 100 } }
         }
         contentItem: RowLayout {
             spacing: 10
             Rectangle { width: 3; Layout.preferredHeight: 16; radius: 2; color: nv.checked ? win.accent : "transparent" }
+            Label {
+                text: nv.glyph
+                color: nv.checked ? win.accent : win.subtle
+                font.pixelSize: 14
+                Layout.preferredWidth: 18
+                horizontalAlignment: Text.AlignHCenter
+            }
             Label { text: nv.text; color: nv.checked ? win.text : win.subtle; font.bold: nv.checked; font.pixelSize: 14; Layout.fillWidth: true }
+        }
+    }
+
+    // OpenGL/Vulkan renderer choice. Qt fixes the RHI backend at startup, so a
+    // change persists to prefs and offers a relaunch.
+    component BackendToggle: RowLayout {
+        spacing: 6
+        Repeater {
+            model: [
+                { v: "auto",   l: "Auto" },
+                { v: "opengl", l: "OpenGL" },
+                { v: "vulkan", l: "Vulkan" }
+            ]
+            delegate: Pill {
+                text: modelData.l
+                font.pixelSize: 12
+                padding: 7; leftPadding: 13; rightPadding: 13
+                base: ctl.render_backend === modelData.v ? win.accent : win.surface2
+                fg: ctl.render_backend === modelData.v ? "#ffffff" : win.text
+                onClicked: ctl.choose_render_backend(modelData.v)
+            }
+        }
+        Primary {
+            visible: ctl.render_backend !== ctl.boot_backend
+            text: "Restart to apply"
+            font.pixelSize: 12
+            padding: 7; leftPadding: 13; rightPadding: 13
+            onClicked: ctl.restart()
+        }
+    }
+
+    component MetricChip: Rectangle {
+        property string label: ""
+        visible: label.length > 0
+        radius: 5
+        color: win.activeBg
+        border.color: win.border
+        border.width: 1
+        implicitHeight: 18
+        implicitWidth: chipText.implicitWidth + 12
+        Label {
+            id: chipText
+            anchors.centerIn: parent
+            text: parent.label
+            color: win.subtle
+            font.pixelSize: 10
+            font.family: win.mono
         }
     }
 
@@ -164,19 +230,29 @@ ApplicationWindow {
                 }
                 Item { Layout.preferredHeight: 12 }
 
-                NavItem { text: "Benchmark"; index: 0 }
-                NavItem { text: "Render";    index: 1 }
-                NavItem { text: "System";    index: 2 }
-                NavItem { text: "History";   index: 3 }
-                NavItem { text: "Settings";  index: 4 }
+                NavItem { text: "Benchmark"; glyph: "⚡"; index: 0 }
+                NavItem { text: "Render";    glyph: "✦"; index: 1 }
+                NavItem { text: "System";    glyph: "▤"; index: 2 }
+                NavItem { text: "History";   glyph: "↺"; index: 3 }
+                NavItem { text: "Settings";  glyph: "⚙"; index: 4 }
 
                 Item { Layout.fillHeight: true }
 
+                Rectangle { Layout.fillWidth: true; height: 1; color: win.border }
                 RowLayout {
                     Layout.fillWidth: true
                     Label { text: "Theme"; color: win.subtle; Layout.fillWidth: true }
                     Label { text: win.dark ? "☾" : "☀"; color: win.subtle; font.pixelSize: 15 }
-                    Switch { checked: win.dark; onToggled: ctl.dark = checked }
+                    Switch { checked: win.dark; onToggled: ctl.set_dark_pref(checked) }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "v" + ctl.app_version + " · " + (win.facts.machine_id || "")
+                    color: win.subtle
+                    opacity: 0.7
+                    font.pixelSize: 10
+                    font.family: win.mono
+                    elide: Text.ElideRight
                 }
             }
         }
@@ -195,7 +271,11 @@ ApplicationWindow {
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 22; anchors.rightMargin: 22
-                    Label { text: win.tabTitles[win.tab]; color: win.text; font.pixelSize: 22; font.bold: true }
+                    ColumnLayout {
+                        spacing: 1
+                        Label { text: win.tabTitles[win.tab]; color: win.text; font.pixelSize: 21; font.bold: true }
+                        Label { text: win.tabSubtitles[win.tab]; color: win.subtle; font.pixelSize: 11 }
+                    }
                     Item { Layout.fillWidth: true }
                     RowLayout {
                         visible: win.tab === 0
@@ -218,7 +298,8 @@ ApplicationWindow {
                 // ───────────────────────── Benchmark ──────────────────────────
                 ColumnLayout {
                     spacing: 14
-                    property int pad: 22
+                    opacity: visible ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 160 } }
                     Item { Layout.preferredHeight: 8 }
 
                     RowLayout {
@@ -260,11 +341,18 @@ ApplicationWindow {
                         }
                     }
 
-                    // status
+                    // status chip
                     RowLayout {
                         Layout.leftMargin: 22; Layout.rightMargin: 22
                         spacing: 8
-                        BusyIndicator { running: ctl.running; visible: ctl.running; implicitWidth: 20; implicitHeight: 20 }
+                        Rectangle {
+                            width: 8; height: 8; radius: 4
+                            color: ctl.running ? win.accent2
+                                 : (ctl.status.indexOf("failed") >= 0 || ctl.status.indexOf("rejected") >= 0) ? win.bad
+                                 : win.good
+                            Behavior on color { ColorAnimation { duration: 200 } }
+                        }
+                        BusyIndicator { running: ctl.running; visible: ctl.running; implicitWidth: 18; implicitHeight: 18 }
                         Label { text: ctl.status; color: win.subtle }
                     }
 
@@ -299,6 +387,8 @@ ApplicationWindow {
                 // ───────────────────────── Render ─────────────────────────────
                 ColumnLayout {
                     spacing: 14
+                    opacity: visible ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 160 } }
                     Item { Layout.preferredHeight: 8 }
 
                     RowLayout {
@@ -316,7 +406,20 @@ ApplicationWindow {
                             text: renderBench.active
                                 ? renderBench.phaseName + " · " + renderBench.items + " items · " + renderBench.liveFps.toFixed(0) + " fps"
                                 : (renderBench.phase === 4 ? "Done — carried into Submit / Share / Export."
-                                                           : "Adaptive GPU load via OpenGL/Vulkan (Qt RHI).")
+                                                           : "Active: " + renderBench.activeApi)
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                        spacing: 8
+                        Label { text: "Backend"; color: win.subtle }
+                        BackendToggle {}
+                        Item { Layout.fillWidth: true }
+                        Label {
+                            visible: ctl.render_backend !== ctl.boot_backend
+                            text: "Restarting clears unsaved results."
+                            color: win.subtle; font.pixelSize: 11
                         }
                     }
 
@@ -332,7 +435,7 @@ ApplicationWindow {
                         StatCard { pal: win; label: "Sustained items"; Layout.fillWidth: true
                             value: renderBench.phase === 4 ? String(renderBench.peakItems) : "—" }
                         StatCard { pal: win; label: "Graphics API"; Layout.fillWidth: true
-                            value: renderBench.phase === 4 ? renderBench.apiName : "—" }
+                            value: renderBench.phase === 4 ? renderBench.apiName : renderBench.activeApi }
                     }
 
                     Rectangle {
@@ -360,6 +463,8 @@ ApplicationWindow {
                 // ───────────────────────── System ─────────────────────────────
                 ColumnLayout {
                     spacing: 14
+                    opacity: visible ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 160 } }
                     Item { Layout.preferredHeight: 8 }
                     GridLayout {
                         Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
@@ -394,6 +499,8 @@ ApplicationWindow {
                 // ───────────────────────── History ────────────────────────────
                 ColumnLayout {
                     spacing: 14
+                    opacity: visible ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 160 } }
                     Item { Layout.preferredHeight: 8 }
 
                     GridLayout {
@@ -442,13 +549,27 @@ ApplicationWindow {
                                 model: win.histList; spacing: 6
                                 delegate: Rectangle {
                                     width: ListView.view ? ListView.view.width : 0
-                                    height: 52; radius: 8
-                                    color: win.surface2; border.color: win.border
+                                    height: 62; radius: 8
+                                    color: rowHover.hovered ? win.hoverBg : win.surface2
+                                    border.color: win.border
+                                    Behavior on color { ColorAnimation { duration: 100 } }
+                                    HoverHandler { id: rowHover }
                                     ColumnLayout {
-                                        anchors.fill: parent; anchors.margins: 9; spacing: 2
-                                        Label { text: modelData.cpu || "—"; color: win.text; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                                        Label { color: win.subtle; font.pixelSize: 11
-                                            text: modelData.when + "   ·   MT " + win.fnum(modelData.mt) + " / ST " + win.fnum(modelData.st) }
+                                        anchors.fill: parent; anchors.margins: 9; spacing: 4
+                                        RowLayout {
+                                            Layout.fillWidth: true; spacing: 8
+                                            Label { text: modelData.cpu || "—"; color: win.text; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                                            Label { text: modelData.when; color: win.subtle; font.pixelSize: 10 }
+                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true; spacing: 5
+                                            MetricChip { label: modelData.mt != null ? "MT " + win.fnum(modelData.mt) : "" }
+                                            MetricChip { label: modelData.st != null ? "ST " + win.fnum(modelData.st) : "" }
+                                            MetricChip { label: modelData.triad != null ? "Triad " + win.fnum(modelData.triad, 1) : "" }
+                                            MetricChip { label: modelData.down != null ? "↓ " + win.fnum(modelData.down) + " Mbps" : "" }
+                                            MetricChip { label: modelData.render != null ? "Render " + win.fnum(modelData.render) : "" }
+                                            Item { Layout.fillWidth: true }
+                                        }
                                     }
                                 }
                             }
@@ -479,6 +600,8 @@ ApplicationWindow {
                 // ───────────────────────── Settings ───────────────────────────
                 ColumnLayout {
                     spacing: 14
+                    opacity: visible ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 160 } }
                     Item { Layout.preferredHeight: 8 }
                     Panel {
                         pal: win; title: "Appearance"
@@ -486,7 +609,26 @@ ApplicationWindow {
                         RowLayout {
                             Layout.fillWidth: true
                             Label { text: "Dark theme"; color: win.text; Layout.fillWidth: true }
-                            Switch { checked: win.dark; onToggled: ctl.dark = checked }
+                            Switch { checked: win.dark; onToggled: ctl.set_dark_pref(checked) }
+                        }
+                    }
+                    Panel {
+                        pal: win; title: "Renderer"
+                        Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 8
+                            RowLayout {
+                                Layout.fillWidth: true
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 2
+                                    Label { text: "Graphics backend"; color: win.text; font.bold: true }
+                                    Label {
+                                        text: "Active: " + renderBench.activeApi + " — applied at launch (QSG_RHI_BACKEND); changing it relaunches the app."
+                                        color: win.subtle; font.pixelSize: 11
+                                    }
+                                }
+                                BackendToggle {}
+                            }
                         }
                     }
                     Panel {

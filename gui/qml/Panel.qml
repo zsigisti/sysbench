@@ -26,14 +26,22 @@ Rectangle {
         anchors.margins: 14
         spacing: 10
 
-        Label {
+        RowLayout {
             visible: panel.title.length > 0
-            text: panel.title
-            color: pal ? pal.subtle : "#9aa1b1"
-            font.bold: true
-            font.pixelSize: 11
-            font.capitalization: Font.AllUppercase
-            font.letterSpacing: 1
+            spacing: 8
+            Rectangle {
+                width: 8; height: 8; radius: 2
+                rotation: 45
+                color: pal ? pal.accent : "#e0552b"
+            }
+            Label {
+                text: panel.title
+                color: pal ? pal.subtle : "#9aa1b1"
+                font.bold: true
+                font.pixelSize: 11
+                font.capitalization: Font.AllUppercase
+                font.letterSpacing: 1.2
+            }
         }
         ColumnLayout {
             id: body

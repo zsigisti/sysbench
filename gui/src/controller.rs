@@ -32,6 +32,13 @@ pub mod qobject {
         #[qproperty(QString, last_json)]
         // The last render-benchmark result JSON (from RenderBench.qml).
         #[qproperty(QString, render_result)]
+        // Renderer preference: "auto" | "opengl" | "vulkan" (persisted; applied
+        // as QSG_RHI_BACKEND on the next launch).
+        #[qproperty(QString, render_backend)]
+        // The preference the running process was started with — when it differs
+        // from render_backend the UI offers "Restart to apply".
+        #[qproperty(QString, boot_backend)]
+        #[qproperty(QString, app_version)]
         type Controller = super::ControllerRust;
 
         /// Run a suite: "all" | "cpu" | "mem" | "net" | "disk" | "info".
@@ -74,6 +81,18 @@ pub mod qobject {
         /// merges a "render" section into the run JSON and records to history.
         #[qinvokable]
         fn record_render(self: Pin<&mut Controller>, json: QString);
+
+        /// Persist the renderer choice ("auto" | "opengl" | "vulkan").
+        #[qinvokable]
+        fn choose_render_backend(self: Pin<&mut Controller>, backend: QString);
+
+        /// Flip + persist the theme.
+        #[qinvokable]
+        fn set_dark_pref(self: Pin<&mut Controller>, dark: bool);
+
+        /// Relaunch the app (after changing the renderer backend).
+        #[qinvokable]
+        fn restart(self: Pin<&mut Controller>);
     }
 
     impl cxx_qt::Threading for Controller {}
@@ -97,18 +116,22 @@ pub struct ControllerRust {
     compare_text: QString,
     last_json: QString,
     render_result: QString,
+    render_backend: QString,
+    boot_backend: QString,
+    app_version: QString,
 }
 
 impl Default for ControllerRust {
     fn default() -> Self {
         let (hist, analysis) = history_payload();
+        let prefs = crate::prefs::load();
         Self {
             status: QString::from("Ready."),
             running: false,
             output: QString::from(""),
             share_url: QString::from(""),
             backend: QString::from(""),
-            dark: true,
+            dark: prefs.dark,
             has_results: false,
             sys_facts: QString::from(sys_facts_json().as_str()),
             history: QString::from(hist.as_str()),
@@ -116,6 +139,9 @@ impl Default for ControllerRust {
             compare_text: QString::from(""),
             last_json: QString::from(""),
             render_result: QString::from(""),
+            render_backend: QString::from(prefs.render_backend.as_str()),
+            boot_backend: QString::from(prefs.render_backend.as_str()),
+            app_version: QString::from(env!("CARGO_PKG_VERSION")),
         }
     }
 }
@@ -378,6 +404,44 @@ impl qobject::Controller {
             ),
         };
         self.as_mut().set_status(QString::from(msg.as_str()));
+    }
+
+    pub fn choose_render_backend(mut self: Pin<&mut Self>, backend: QString) {
+        let b = backend.to_string();
+        if !matches!(b.as_str(), "auto" | "opengl" | "vulkan") {
+            return;
+        }
+        self.as_mut().set_render_backend(QString::from(b.as_str()));
+        let p = crate::prefs::Prefs {
+            dark: *self.dark(),
+            render_backend: b,
+        };
+        if let Err(e) = crate::prefs::save(&p) {
+            self.as_mut()
+                .set_status(QString::from(format!("Could not save preferences: {}", e).as_str()));
+        }
+    }
+
+    pub fn set_dark_pref(mut self: Pin<&mut Self>, dark: bool) {
+        self.as_mut().set_dark(dark);
+        let p = crate::prefs::Prefs {
+            dark,
+            render_backend: self.render_backend().to_string(),
+        };
+        if let Err(e) = crate::prefs::save(&p) {
+            self.as_mut()
+                .set_status(QString::from(format!("Could not save preferences: {}", e).as_str()));
+        }
+    }
+
+    pub fn restart(self: Pin<&mut Self>) {
+        if let Ok(exe) = std::env::current_exe() {
+            // the child re-derives the backend from prefs, not our (stale) env
+            let _ = std::process::Command::new(exe)
+                .env_remove("QSG_RHI_BACKEND")
+                .spawn();
+        }
+        std::process::exit(0);
     }
 
     pub fn uninstall(mut self: Pin<&mut Self>, purge: bool) {

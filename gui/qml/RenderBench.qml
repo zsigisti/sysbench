@@ -41,6 +41,16 @@ Item {
     property int peakItems: 0
     property string apiName: "—"
 
+    // The window's active graphics API, probed shortly after startup (the
+    // scene graph needs a frame or two before GraphicsInfo.api is valid).
+    property string activeApi: "—"
+    Timer {
+        interval: 700
+        repeat: true
+        running: root.activeApi === "—" || root.activeApi === "Unknown"
+        onTriggered: root.activeApi = root.apiString()
+    }
+
     /// Emitted at the end of a completed run with the result JSON:
     /// {score, items, fps, low1_fps, api, refresh_hz}
     signal finished(string resultJson)
@@ -225,16 +235,29 @@ Item {
             }
         }
 
-        Text {
+        Column {
             anchors.centerIn: parent
             visible: !root.active
-            color: root.pal ? root.pal.subtle : "#9aa1b1"
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignHCenter
-            text: root.phase === 4
-                ? "Score " + root.score + " — " + root.peakItems + " items at "
-                  + root.avgFps.toFixed(1) + " fps (" + root.apiName + ")"
-                : "The arena fills with animated quads while the\nbenchmark ramps the load. Keep this window visible."
+            spacing: 6
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: root.phase === 4
+                color: root.pal ? root.pal.accent : "#e0552b"
+                font.pixelSize: 54
+                font.bold: true
+                text: root.score
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                color: root.pal ? root.pal.subtle : "#9aa1b1"
+                font.pixelSize: 14
+                horizontalAlignment: Text.AlignHCenter
+                text: root.phase === 4
+                    ? root.peakItems + " items sustained at " + root.avgFps.toFixed(1)
+                      + " fps · " + root.apiName
+                    : "The arena fills with animated quads while the\nbenchmark ramps the load. Keep this window visible."
+            }
         }
     }
 }
