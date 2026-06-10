@@ -50,8 +50,10 @@ spawning a new one each time:
 - Derive the public `id` deterministically from it: `id = machine_id` (it is
   already a short, opaque hash — do not re-hash). This makes each machine's
   result URL (`/r/<id>`) stable and shareable.
-- On `POST`, **upsert**: insert if new, otherwise overwrite that row's summary
-  columns, `raw`, and `created_at` with the latest submission (latest run wins).
+- On `POST`, **upsert and merge**: insert if new, otherwise update the row —
+  identity fields (`cpu_model`, `os`, …), `raw`, and `created_at` take the latest
+  submission, while each metric keeps its prior value when the new submission
+  didn't measure it (so partial runs accumulate; see the `COALESCE` SQL in §2).
 - Fallback: if `machine_id` is absent (older client), generate a random 12-hex
   `id` as before so the insert still succeeds.
 
@@ -118,7 +120,11 @@ CREATE TABLE IF NOT EXISTS results (
 CREATE INDEX IF NOT EXISTS idx_results_mt ON results(composite_mt DESC);
 ```
 
-Insert with an upsert so a machine's row is replaced in place on re-submit:
+Insert with an upsert that **merges** metrics so a machine ends up with one
+complete row even when it submits one suite at a time. Identity fields take the
+latest value; each metric keeps its existing value when the new submission omits
+it (`COALESCE(excluded.x, x)`) — a mem-only run then a net-only run accumulate
+into a single row instead of overwriting each other:
 
 ```sql
 INSERT INTO results (id, created_at, raw, cpu_model, cores, ram_mib, os, kernel,
@@ -126,15 +132,28 @@ INSERT INTO results (id, created_at, raw, cpu_model, cores, ram_mib, os, kernel,
   net_latency_ms, disk_seq_write_mbs, disk_seq_read_mbs)
 VALUES (?1, ?2, ?3, ?4, …)
 ON CONFLICT(id) DO UPDATE SET
-  created_at=excluded.created_at, raw=excluded.raw, cpu_model=excluded.cpu_model,
-  cores=excluded.cores, ram_mib=excluded.ram_mib, os=excluded.os,
-  kernel=excluded.kernel, composite_mt=excluded.composite_mt,
-  composite_st=excluded.composite_st, speedup=excluded.speedup,
-  mem_triad_gbs=excluded.mem_triad_gbs, net_down_mbps=excluded.net_down_mbps,
-  net_up_mbps=excluded.net_up_mbps, net_latency_ms=excluded.net_latency_ms,
-  disk_seq_write_mbs=excluded.disk_seq_write_mbs,
-  disk_seq_read_mbs=excluded.disk_seq_read_mbs;
+  -- identity / freshness: always take the latest submission
+  created_at = excluded.created_at,
+  raw        = excluded.raw,
+  cpu_model  = excluded.cpu_model,
+  cores      = excluded.cores,
+  ram_mib    = excluded.ram_mib,
+  os         = excluded.os,
+  kernel     = excluded.kernel,
+  -- metrics: keep the prior value when this submission didn't measure it
+  composite_mt       = COALESCE(excluded.composite_mt, composite_mt),
+  composite_st       = COALESCE(excluded.composite_st, composite_st),
+  speedup            = COALESCE(excluded.speedup, speedup),
+  mem_triad_gbs      = COALESCE(excluded.mem_triad_gbs, mem_triad_gbs),
+  net_down_mbps      = COALESCE(excluded.net_down_mbps, net_down_mbps),
+  net_up_mbps        = COALESCE(excluded.net_up_mbps, net_up_mbps),
+  net_latency_ms     = COALESCE(excluded.net_latency_ms, net_latency_ms),
+  disk_seq_write_mbs = COALESCE(excluded.disk_seq_write_mbs, disk_seq_write_mbs),
+  disk_seq_read_mbs  = COALESCE(excluded.disk_seq_read_mbs, disk_seq_read_mbs);
 ```
+
+(A full `crux submit` measures everything at once, so it fills the whole row in
+one go; the COALESCE merge just makes partial runs behave sanely too.)
 
 ---
 
