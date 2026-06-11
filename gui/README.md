@@ -50,10 +50,13 @@ measures is produced by identical code, so the numbers match `crux` exactly.
 **Render tab** (GUI-only — the CLI has no equivalent)
 - A **GPU render benchmark** driving the Qt Quick scene graph through whatever
   RHI backend is active (Vulkan or OpenGL on Linux). It warms up, **ramps** the
-  number of render-thread-animated gradient quads until the GPU can no longer
-  hold ~92% of the display refresh rate, then **measures** a 5-second sustained
-  window. Score = items × fps / 100 (throughput — meaningful even under vsync),
-  plus avg FPS, 1% lows, sustained item count, and the graphics API used.
+  number of render-thread-animated composite sprites (rotating gradient body +
+  counter-rotating core + ring + scale pulse, over a stack of full-arena
+  overdraw sheets) until the GPU can no longer hold ~92% of the display refresh
+  rate, then **measures** a 5-second sustained window. Score = items × fps / 100
+  (throughput — meaningful even under vsync), plus avg FPS, 1% lows, sustained
+  item count, and the graphics API used. The load profile is versioned
+  (`"bench": 2` in the result JSON); v2 scores are not comparable with v1.
 - The result is merged into the run JSON as a `"render"` section, so **Submit /
   Share / Export** carry it and the leaderboard can rank it; it is also recorded
   to local history and shows up in Compare.
@@ -104,9 +107,12 @@ in `~/.local/share/crucible/history`. You can also uninstall from the CLI with
   on the **root** `ApplicationWindow` id (driven by `ctl.dark`) so it resolves
   inside `Repeater`/`ListView` delegates too.
 - `qml/RenderBench.qml` — the self-contained GPU benchmark: a `FrameAnimation`
-  phase machine (warm-up → ramp → measure) over `RotationAnimator`-driven quads
-  (render thread, no per-frame JS), reporting `{score, items, fps, low1_fps,
-  api, refresh_hz}` via `finished()` → `ctl.record_render()`.
+  phase machine (warm-up → ramp → measure) over Animator-driven composite
+  sprites plus fixed overdraw sheets (render thread, no per-frame JS). The
+  first fps window after each item-count change is discarded and measurement
+  sampling starts after a short settle, so delegate-creation stalls can't skew
+  the ramp. Reports `{bench, score, items, fps, low1_fps, api, refresh_hz}`
+  via `finished()` → `ctl.record_render()`.
 - `qml/StatCard.qml` — a pure key/value tile (plain props only) used inside grid
   delegates; `qml/Panel.qml` — a titled surface used outside delegates.
 - `assets/logo.svg` is copied to `qml/logo.svg` by `build.rs` and bundled into

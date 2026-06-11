@@ -32,15 +32,17 @@ metric as optional — partial runs happen):
   "net":  { "download_mbps": {"Ok": 300.0}, "upload_mbps": {"Ok": 55.0},
             "latency": {"Ok": {"avg_ms": 9.8}} },
   "disk": { "seq_write_mbs": 3000, "seq_read_mbs": 3500 },
-  "render": { "score": 4800, "fps": 142.3, "low1_fps": 96.1, "items": 3375,
-              "api": "Vulkan", "refresh_hz": 144.0 }
+  "render": { "bench": 2, "score": 4800, "fps": 142.3, "low1_fps": 96.1,
+              "items": 3375, "api": "Vulkan", "refresh_hz": 144.0 }
 }
 ```
 
 `render` is the GPU render benchmark — **GUI-only and optional** (CLI runs never
 send it). `render.score` is throughput (sustained animated items × fps / 100,
 higher is better), `render.api` is the graphics backend ("Vulkan", "OpenGL",
-"Metal", …).
+"Metal", …). `render.bench` is the load-profile version (currently 2; scores
+from different versions are not comparable — older clients omit the field,
+treat that as version 1). Ignore unknown fields.
 
 Note `net.*` values are serde-`Result`-encoded: read `["net"]["download_mbps"]["Ok"]`.
 
